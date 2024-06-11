@@ -164,6 +164,10 @@ impl ChessGame {
                 self.active_tile = Some(pos);
             }
         }
+        // If we clicked an empty tile, clear active tile
+        else {
+            self.active_tile = None;
+        }
     }
 
     pub fn handle_keypress(&mut self, keycode: Keycode) {
@@ -249,6 +253,36 @@ impl Board {
         }
     }
 
+    pub fn from_fen(fen: &str) -> Self {
+        let mut board = Self::new();
+        board.load_fen(fen);
+        board
+    }
+
+    pub fn load_fen(&mut self, fen: &str) {
+        let mut input = fen.split_ascii_whitespace();
+        let fen_board = input.next().expect("FEN string should contain text");
+
+        let (mut row, mut col) = (7, 0);
+        for c in fen_board.chars() {
+            if let Some(d) = c.to_digit(10) {
+                for _ in 0..d {
+                    self.board[row][col] = None;
+                    col += 1;
+                }
+            } else if let piece @ Some(_) = Piece::from_fen(c) {
+                self.board[row][col] = piece;
+                col += 1;
+            } else if c == '/' {
+                (row, col) = (row - 1, 0);
+            } else {
+                panic!("Invalid character in FEN string: '{}'", c);
+            }
+        }
+
+        // TODO: Implement reading other fields (i.e. whose turn it is, castling rules etc.)
+    }
+
     pub fn into_game(self) -> ChessGame {
         ChessGame {
             board: self,
@@ -269,11 +303,6 @@ impl Board {
             return Err(ChessMoveError::OutOfBounds);
         }
 
-        let mut chess_move = ChessMove {
-            from,
-            to,
-            captured_piece: None,
-        };
         match (self.at(from), self.at(to)) {
             (Some(piece), other) => {
                 if let Some(other_piece) = other {
@@ -284,9 +313,12 @@ impl Board {
 
                 self.board[to.row as usize][to.col as usize] = Some(piece);
                 self.board[from.row as usize][from.col as usize] = None;
+                self.history.push(ChessMove {
+                    from,
+                    to,
+                    captured_piece: other,
+                });
 
-                chess_move.captured_piece = other;
-                self.history.push(chess_move);
                 Ok(())
             }
             (None, _) => Err(ChessMoveError::MissingPiece),
@@ -398,7 +430,8 @@ impl Board {
             moves.push(new_pos);
 
             // Check for first move
-            let has_moved = self.history.iter().any(|m| m.to == pos);
+            let has_moved =
+                (color == Color::White && pos.row != 1) || (color == Color::Black && pos.row != 6);
             let new_pos = Position::new(pos.row + row_offset * 2, pos.col);
             if !has_moved && self.at(new_pos).is_none() {
                 moves.push(new_pos);
@@ -413,8 +446,40 @@ impl Board {
                     moves.push(new_pos);
                 }
             }
-        }
+            // Check for en passant
+            else if let Some(m) = self.history.last() {
+                let above = Position::new(new_pos.row + 1, new_pos.col);
+                let below = Position::new(new_pos.row - 1, new_pos.col);
 
+                match (color, self.at(above), self.at(below)) {
+                    (
+                        Color::White,
+                        None,
+                        Some(Piece {
+                            color: Color::Black,
+                            piece: PieceType::Pawn,
+                        }),
+                    ) => {
+                        if m.from == above && m.to == below {
+                            moves.push(new_pos);
+                        }
+                    }
+                    (
+                        Color::Black,
+                        Some(Piece {
+                            color: Color::White,
+                            piece: PieceType::Pawn,
+                        }),
+                        None,
+                    ) => {
+                        if m.from == below && m.to == above {
+                            moves.push(new_pos);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         moves
     }
 
@@ -573,43 +638,6 @@ impl FromStr for Position {
 
 impl Default for Board {
     fn default() -> Self {
-        use Color as C;
-        use Piece as Pi;
-        use PieceType as P;
-        use Position as Pos;
-        Self::with_pieces(vec![
-            (Pi::new(C::White, P::Rook), Pos::from_str("a1").unwrap()),
-            (Pi::new(C::White, P::Knight), Pos::from_str("b1").unwrap()),
-            (Pi::new(C::White, P::Bishop), Pos::from_str("c1").unwrap()),
-            (Pi::new(C::White, P::Queen), Pos::from_str("d1").unwrap()),
-            (Pi::new(C::White, P::King), Pos::from_str("e1").unwrap()),
-            (Pi::new(C::White, P::Bishop), Pos::from_str("f1").unwrap()),
-            (Pi::new(C::White, P::Knight), Pos::from_str("g1").unwrap()),
-            (Pi::new(C::White, P::Rook), Pos::from_str("h1").unwrap()),
-            (Pi::new(C::White, P::Pawn), Pos::from_str("a2").unwrap()),
-            (Pi::new(C::White, P::Pawn), Pos::from_str("b2").unwrap()),
-            (Pi::new(C::White, P::Pawn), Pos::from_str("c2").unwrap()),
-            (Pi::new(C::White, P::Pawn), Pos::from_str("d2").unwrap()),
-            (Pi::new(C::White, P::Pawn), Pos::from_str("e2").unwrap()),
-            (Pi::new(C::White, P::Pawn), Pos::from_str("f2").unwrap()),
-            (Pi::new(C::White, P::Pawn), Pos::from_str("g2").unwrap()),
-            (Pi::new(C::White, P::Pawn), Pos::from_str("h2").unwrap()),
-            (Pi::new(C::Black, P::Pawn), Pos::from_str("a7").unwrap()),
-            (Pi::new(C::Black, P::Pawn), Pos::from_str("b7").unwrap()),
-            (Pi::new(C::Black, P::Pawn), Pos::from_str("c7").unwrap()),
-            (Pi::new(C::Black, P::Pawn), Pos::from_str("d7").unwrap()),
-            (Pi::new(C::Black, P::Pawn), Pos::from_str("e7").unwrap()),
-            (Pi::new(C::Black, P::Pawn), Pos::from_str("f7").unwrap()),
-            (Pi::new(C::Black, P::Pawn), Pos::from_str("g7").unwrap()),
-            (Pi::new(C::Black, P::Pawn), Pos::from_str("h7").unwrap()),
-            (Pi::new(C::Black, P::Rook), Pos::from_str("a8").unwrap()),
-            (Pi::new(C::Black, P::Knight), Pos::from_str("b8").unwrap()),
-            (Pi::new(C::Black, P::Bishop), Pos::from_str("c8").unwrap()),
-            (Pi::new(C::Black, P::Queen), Pos::from_str("d8").unwrap()),
-            (Pi::new(C::Black, P::King), Pos::from_str("e8").unwrap()),
-            (Pi::new(C::Black, P::Bishop), Pos::from_str("f8").unwrap()),
-            (Pi::new(C::Black, P::Knight), Pos::from_str("g8").unwrap()),
-            (Pi::new(C::Black, P::Rook), Pos::from_str("h8").unwrap()),
-        ])
+        Self::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
     }
 }
