@@ -271,6 +271,8 @@ pub struct Chessboard {
     castling_rights: Vec<CastlingRight>,
     en_passant_target: Option<Position>,
     start_turn_number: u32,
+    white_king: Position,
+    black_king: Position,
 }
 
 impl Chessboard {
@@ -282,6 +284,8 @@ impl Chessboard {
             castling_rights: CastlingRight::STANDARD.to_vec(),
             en_passant_target: None,
             start_turn_number: 0,
+            white_king: Position::new(0, 0),
+            black_king: Position::new(0, 0),
         }
     }
 
@@ -302,8 +306,14 @@ impl Chessboard {
                     self.board[row][col] = None;
                     col += 1;
                 }
-            } else if let piece @ Some(_) = Piece::from_fen(c) {
-                self.board[row][col] = piece;
+            } else if let Some(piece) = Piece::from_fen(c) {
+                if piece.piece == PieceType::King {
+                    match piece.color {
+                        Color::White => self.white_king = Position::new(row as i8, col as i8),
+                        Color::Black => self.black_king = Position::new(row as i8, col as i8),
+                    }
+                }
+                self.board[row][col] = Some(piece);
                 col += 1;
             } else if c == '/' {
                 (row, col) = (row - 1, 0);
@@ -448,6 +458,14 @@ impl Chessboard {
                     captured_piece: other,
                 });
 
+                // Update king positions
+                if piece.piece == PieceType::King {
+                    match piece.color {
+                        Color::White => self.white_king = to,
+                        Color::Black => self.black_king = to,
+                    }
+                }
+
                 Ok(())
             }
             (None, _) => Err(ChessMoveError::MissingPiece),
@@ -482,6 +500,7 @@ impl Chessboard {
             // No moves have been made, do nothing
             return;
         };
+        // TODO: Add handling of moving a king piece
         self.board[from.row as usize][from.col as usize] = self.at(to);
         self.board[to.row as usize][to.col as usize] = captured_piece;
     }
@@ -494,51 +513,117 @@ impl Chessboard {
         }
     }
 
-    fn is_move_valid(&mut self, from: Position, to: Position) -> bool {
-        let current_turn = self.current_turn_color();
-        if self.make_move_unchecked(from, to).is_err() {
-            return false;
+    fn is_king_in_check(&mut self, color: Color) -> bool {
+        // // Check if any opposing pieces can capture the king
+        // for (row, row_tiles) in self.board.iter().enumerate() {
+        //     for (col, piece) in row_tiles.iter().enumerate() {
+        //         if piece.is_none() {
+        //             continue;
+        //         }
+        //         if let Some(Piece { color, .. }) = piece {
+        //             if *color == current_turn {
+        //                 // Current piece is the same color as the piece that just moved, skip
+        //                 continue;
+        //             }
+        //         }
+
+        //         // Check if any possible move can capture the king
+        //         let pos = Position::new(row as i8, col as i8);
+        //         for mov in &self.generate_moves(pos) {
+        //             if let Some(Piece {
+        //                 color,
+        //                 piece: PieceType::King,
+        //             }) = self.at(*mov)
+        //             {
+        //                 if color == current_turn {
+        //                     self.undo();
+        //                     return false;
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+
+        let pos = match color {
+            Color::White => self.white_king,
+            Color::Black => self.black_king,
+        };
+
+        if self
+            .rook_moves(color, pos)
+            .iter()
+            .any(|m| match self.at(*m) {
+                Some(piece) => {
+                    piece.color != color
+                        && (piece.piece == PieceType::Rook || piece.piece == PieceType::Queen)
+                }
+                None => false,
+            })
+        {
+            return true;
         }
 
-        // Check if any opposing pieces can capture the king
-        for (row, row_tiles) in self.board.iter().enumerate() {
-            for (col, piece) in row_tiles.iter().enumerate() {
-                if piece.is_none() {
-                    continue;
+        if self
+            .bishop_moves(color, pos)
+            .iter()
+            .any(|m| match self.at(*m) {
+                Some(piece) => {
+                    piece.color != color
+                        && (piece.piece == PieceType::Bishop || piece.piece == PieceType::Queen)
                 }
-                if let Some(Piece { color, .. }) = piece {
-                    if *color == current_turn {
-                        // Current piece is the same color as the piece that just moved, skip
-                        continue;
-                    }
-                }
-
-                // Check if any possible move can capture the king
-                let pos = Position::new(row as i8, col as i8);
-                for mov in &self.generate_moves(pos) {
-                    if let Some(Piece {
-                        color,
-                        piece: PieceType::King,
-                    }) = self.at(*mov)
-                    {
-                        if color == current_turn {
-                            self.undo();
-                            return false;
-                        }
-                    }
-                }
-            }
+                None => false,
+            })
+        {
+            return true;
         }
 
-        self.undo();
-        true
+        if self
+            .pawn_moves(color, pos)
+            .iter()
+            .any(|m| match self.at(*m) {
+                Some(piece) => piece.color != color && piece.piece == PieceType::Pawn,
+                None => false,
+            })
+        {
+            return true;
+        }
+
+        if self
+            .knight_moves(color, pos)
+            .iter()
+            .any(|m| match self.at(*m) {
+                Some(piece) => piece.color != color && piece.piece == PieceType::Knight,
+                None => false,
+            })
+        {
+            return true;
+        }
+
+        if self
+            .king_moves(color, pos)
+            .iter()
+            .any(|m| match self.at(*m) {
+                Some(piece) => piece.color != color && piece.piece == PieceType::King,
+                None => false,
+            })
+        {
+            return true;
+        }
+
+        false
     }
 
     pub fn moves(&mut self, pos: Position) -> Vec<Position> {
+        let current_turn = self.current_turn_color();
         self.generate_moves(pos)
             .iter()
             .cloned()
-            .filter(|to| self.is_move_valid(pos, *to))
+            .filter(|to| {
+                self.make_move_unchecked(pos, *to).unwrap();
+                let ret = !self.is_king_in_check(current_turn);
+                self.undo();
+                ret
+            })
             .collect()
     }
 
@@ -585,6 +670,7 @@ impl Chessboard {
                     moves.push(new_pos);
                 }
             }
+            // TODO: Make this use the struct field `en_passant_target`
             // Check for en passant
             else if let Some(m) = self.history.last() {
                 let above = Position::new(new_pos.row + 1, new_pos.col);
@@ -622,45 +708,36 @@ impl Chessboard {
         moves
     }
 
+    const DIAGONAL_DIRECTIONS: [(i8, i8); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
+    const CARDINAL_DIRECTIONS: [(i8, i8); 4] = [(0, 1), (1, 0), (0, -1), (-1, 0)];
+    const KNIGHT_MOVES: [(i8, i8); 8] = [
+        (-1, -2),
+        (1, -2),
+        (-2, -1),
+        (2, -1),
+        (-2, 1),
+        (2, 1),
+        (-1, 2),
+        (1, 2),
+    ];
+
     fn knight_moves(&self, color: Color, pos: Position) -> Vec<Position> {
-        self.moves_with_offsets(
-            color,
-            pos,
-            vec![
-                (-1, -2),
-                (1, -2),
-                (-2, -1),
-                (2, -1),
-                (-2, 1),
-                (2, 1),
-                (-1, 2),
-                (1, 2),
-            ],
-        )
+        self.moves_with_offsets(color, pos, Self::KNIGHT_MOVES.to_vec())
     }
 
     fn bishop_moves(&self, color: Color, pos: Position) -> Vec<Position> {
-        self.moves_with_directions(color, pos, vec![(1, 1), (1, -1), (-1, 1), (-1, -1)])
+        self.moves_with_directions(color, pos, Self::DIAGONAL_DIRECTIONS.to_vec())
     }
 
     fn rook_moves(&self, color: Color, pos: Position) -> Vec<Position> {
-        self.moves_with_directions(color, pos, vec![(0, 1), (1, 0), (0, -1), (-1, 0)])
+        self.moves_with_directions(color, pos, Self::CARDINAL_DIRECTIONS.to_vec())
     }
 
     fn queen_moves(&self, color: Color, pos: Position) -> Vec<Position> {
         self.moves_with_directions(
             color,
             pos,
-            vec![
-                (0, 1),
-                (1, 0),
-                (0, -1),
-                (-1, 0),
-                (1, 1),
-                (1, -1),
-                (-1, 1),
-                (-1, -1),
-            ],
+            [Self::CARDINAL_DIRECTIONS, Self::DIAGONAL_DIRECTIONS].concat(),
         )
     }
 
