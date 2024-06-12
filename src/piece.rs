@@ -15,9 +15,9 @@ pub enum PieceType {
 }
 
 impl PieceType {
-    pub fn to_char(&self) -> char {
+    pub fn to_char(self) -> char {
         match self {
-            PieceType::Pawn => ' ',
+            PieceType::Pawn => 'P',
             PieceType::Knight => 'N',
             PieceType::Bishop => 'B',
             PieceType::Rook => 'R',
@@ -53,6 +53,15 @@ impl Piece {
             'k' => PieceType::King,
             _ => return None,
         };
-        Some(Self { color, piece })
+        Some(Self::new(color, piece))
+    }
+
+    pub fn to_fen(self) -> char {
+        let c = self.piece.to_char();
+        if self.color == Color::White {
+            c
+        } else {
+            c.to_ascii_lowercase()
+        }
     }
 }

@@ -143,18 +143,12 @@ impl ChessGame {
     pub fn handle_click(&mut self, row: u8, col: u8) {
         let pos = Position::new(row as i8, col as i8);
 
-        if pos.in_bounds() {
-            println!("Pressed {}", pos);
-        } else {
-            println!("row={row}, col={col}");
-            return;
-        }
-
         // If we have an active tile, try to move
         if let Some(last_interact) = self.active_tile {
             // If move is successful, reset active tile
             if let Ok(()) = self.board.make_move(last_interact, pos) {
                 self.active_tile = None;
+                println!("{}", self.board.to_fen());
             }
         }
 
@@ -240,7 +234,7 @@ impl Board {
         }
     }
 
-    pub fn with_pieces(pieces: Vec<(Piece, Position)>) -> Self {
+    pub fn _with_pieces(pieces: Vec<(Piece, Position)>) -> Self {
         let mut board = [[None; SIZE]; SIZE];
         for (piece, pos) in &pieces {
             if pos.in_bounds() {
@@ -281,6 +275,30 @@ impl Board {
         }
 
         // TODO: Implement reading other fields (i.e. whose turn it is, castling rules etc.)
+    }
+
+    pub fn to_fen(&self) -> String {
+        let mut fen = String::new();
+        let mut empty_tiles = 0;
+        for row in self.board {
+            for piece in row {
+                if let Some(piece) = piece {
+                    if empty_tiles > 0 {
+                        fen.push_str(&empty_tiles.to_string());
+                        empty_tiles = 0;
+                    }
+                    fen.push(piece.to_fen());
+                } else {
+                    empty_tiles += 1;
+                }
+            }
+            if empty_tiles > 0 {
+                fen.push_str(&empty_tiles.to_string());
+                empty_tiles = 0;
+            }
+            fen.push('/');
+        }
+        fen
     }
 
     pub fn into_game(self) -> ChessGame {
