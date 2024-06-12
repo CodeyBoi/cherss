@@ -1,10 +1,9 @@
 use std::time::Duration;
 
-use chessboard::Board;
-use sdl2::{
-    event::Event, keyboard::Keycode, pixels::Color, rect::Rect, render::Canvas, video::Window,
-};
+use chessboard::Chessboard;
+use sdl2::{event::Event, keyboard::Keycode, pixels::Color, render::Canvas, video::Window};
 
+mod bot;
 mod chessboard;
 mod piece;
 
@@ -20,7 +19,8 @@ fn main() {
 
     let mut canvas = window.into_canvas().build().unwrap();
 
-    let mut chess = Board::default().into_game();
+    let mut chess =
+        Chessboard::from_fen("8/5k2/3p4/1p1Pp2p/pP2Pp1P/P4P1K/8/8 b - - 99 50").into_game();
 
     canvas.clear();
     chess.render(&mut canvas);
@@ -75,4 +75,4 @@ fn main() {
     }
 }
 
-fn render_chessboard(canvas: &mut Canvas<Window>, chessboard: &Board) {}
+fn render_chessboard(canvas: &mut Canvas<Window>, chessboard: &Chessboard) {}

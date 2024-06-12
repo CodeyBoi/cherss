@@ -9,7 +9,7 @@ use crate::piece::{Color, Piece, PieceType};
 pub const SIZE: usize = 8;
 
 pub struct ChessGame {
-    board: Board,
+    board: Chessboard,
     active_tile: Option<Position>,
 }
 
@@ -154,7 +154,7 @@ impl ChessGame {
 
         // Check if we pressed a piece and in that case set that tile as the active tile
         if let Some(piece) = self.board.at(pos) {
-            if piece.color == self.board.current_turn() {
+            if piece.color == self.board.current_turn_color() {
                 self.active_tile = Some(pos);
             }
         }
@@ -171,17 +171,12 @@ impl ChessGame {
                 self.active_tile = None;
             }
             Keycode::R => {
-                self.board = Board::default();
+                self.board = Chessboard::default();
                 self.active_tile = None;
             }
             _ => {}
         }
     }
-}
-
-pub struct Board {
-    pub board: [[Option<Piece>; SIZE]; SIZE],
-    history: Vec<ChessMove>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -226,34 +221,77 @@ pub enum ChessMoveError {
     IllegalMove,
 }
 
-impl Board {
+#[derive(Debug)]
+pub enum ParseFENError {
+    IncompleteString,
+    InvalidTurn,
+}
+
+#[derive(Clone, Copy)]
+pub enum CastlingSide {
+    KingSide,
+    QueenSide,
+}
+
+#[derive(Clone, Copy)]
+pub struct CastlingRight {
+    side: CastlingSide,
+    color: Color,
+}
+
+impl CastlingRight {
+    const STANDARD: [Self; 4] = [
+        Self {
+            side: CastlingSide::KingSide,
+            color: Color::White,
+        },
+        Self {
+            side: CastlingSide::QueenSide,
+            color: Color::White,
+        },
+        Self {
+            side: CastlingSide::KingSide,
+            color: Color::Black,
+        },
+        Self {
+            side: CastlingSide::QueenSide,
+            color: Color::Black,
+        },
+    ];
+
+    pub fn new(color: Color, side: CastlingSide) -> Self {
+        Self { color, side }
+    }
+}
+
+pub struct Chessboard {
+    pub board: [[Option<Piece>; SIZE]; SIZE],
+    history: Vec<ChessMove>,
+    first_turn_color: Color,
+    castling_rights: Vec<CastlingRight>,
+    en_passant_target: Option<Position>,
+    start_turn_number: u32,
+}
+
+impl Chessboard {
     pub fn new() -> Self {
         Self {
             board: [[None; SIZE]; SIZE],
             history: Vec::new(),
-        }
-    }
-
-    pub fn _with_pieces(pieces: Vec<(Piece, Position)>) -> Self {
-        let mut board = [[None; SIZE]; SIZE];
-        for (piece, pos) in &pieces {
-            if pos.in_bounds() {
-                board[pos.row as usize][pos.col as usize] = Some(*piece);
-            }
-        }
-        Self {
-            board,
-            history: Vec::new(),
+            first_turn_color: Color::White,
+            castling_rights: CastlingRight::STANDARD.to_vec(),
+            en_passant_target: None,
+            start_turn_number: 0,
         }
     }
 
     pub fn from_fen(fen: &str) -> Self {
         let mut board = Self::new();
-        board.load_fen(fen);
+        board.load_fen(fen).unwrap();
         board
     }
 
-    pub fn load_fen(&mut self, fen: &str) {
+    pub fn load_fen(&mut self, fen: &str) -> Result<(), ParseFENError> {
         let mut input = fen.split_ascii_whitespace();
         let fen_board = input.next().expect("FEN string should contain text");
 
@@ -274,13 +312,45 @@ impl Board {
             }
         }
 
-        // TODO: Implement reading other fields (i.e. whose turn it is, castling rules etc.)
+        self.first_turn_color = match input.next() {
+            Some(current_turn) => match current_turn {
+                "w" => Color::White,
+                "b" => Color::Black,
+                _ => return Err(ParseFENError::InvalidTurn),
+            },
+            None => return Err(ParseFENError::IncompleteString),
+        };
+
+        self.castling_rights = input
+            .next()
+            .unwrap()
+            .chars()
+            .filter_map(|c| match c {
+                'K' => Some(CastlingRight::new(Color::White, CastlingSide::KingSide)),
+                'Q' => Some(CastlingRight::new(Color::White, CastlingSide::QueenSide)),
+                'k' => Some(CastlingRight::new(Color::Black, CastlingSide::KingSide)),
+                'q' => Some(CastlingRight::new(Color::Black, CastlingSide::QueenSide)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        self.en_passant_target = Position::from_str(input.next().unwrap()).ok();
+
+        input.next(); // discard halfmove clock
+
+        self.start_turn_number = input
+            .next()
+            .unwrap()
+            .parse()
+            .expect("Fullmove number could not be parsed");
+
+        Ok(())
     }
 
     pub fn to_fen(&self) -> String {
         let mut fen = String::new();
         let mut empty_tiles = 0;
-        for row in self.board {
+        for row in self.board.iter().rev() {
             for piece in row {
                 if let Some(piece) = piece {
                     if empty_tiles > 0 {
@@ -298,6 +368,47 @@ impl Board {
             }
             fen.push('/');
         }
+        fen.pop(); // pop last slash char
+        fen.push(' ');
+
+        fen.push(match self.current_turn_color() {
+            Color::White => 'w',
+            Color::Black => 'b',
+        });
+        fen.push(' ');
+
+        let castling_string = self
+            .castling_rights
+            .iter()
+            .map(|cr| {
+                let c = match cr.side {
+                    CastlingSide::KingSide => 'K',
+                    CastlingSide::QueenSide => 'Q',
+                };
+                match cr.color {
+                    Color::White => c,
+                    Color::Black => c.to_ascii_lowercase(),
+                }
+            })
+            .collect::<String>();
+        if castling_string.is_empty() {
+            fen.push('-');
+        } else {
+            fen.push_str(&castling_string);
+        }
+        fen.push(' ');
+
+        if let Some(pos) = self.en_passant_target {
+            fen.push_str(pos.to_string().as_str());
+        } else {
+            fen.push('-');
+        }
+        fen.push(' ');
+
+        fen.push_str("0 "); // halfmove clock
+
+        fen.push_str(self.turn_number().to_string().as_str());
+
         fen
     }
 
@@ -343,8 +454,18 @@ impl Board {
         }
     }
 
-    pub fn current_turn(&self) -> Color {
-        if self.history.len() % 2 == 0 {
+    pub fn turn_number(&self) -> u32 {
+        self.moves_made() / 2
+    }
+
+    fn moves_made(&self) -> u32 {
+        self.start_turn_number * 2
+            + (self.first_turn_color == Color::Black) as u32
+            + self.history.len() as u32
+    }
+
+    pub fn current_turn_color(&self) -> Color {
+        if self.moves_made() % 2 == 0 {
             Color::White
         } else {
             Color::Black
@@ -374,7 +495,7 @@ impl Board {
     }
 
     fn is_move_valid(&mut self, from: Position, to: Position) -> bool {
-        let current_turn = self.current_turn();
+        let current_turn = self.current_turn_color();
         if self.make_move_unchecked(from, to).is_err() {
             return false;
         }
@@ -654,8 +775,8 @@ impl FromStr for Position {
     }
 }
 
-impl Default for Board {
+impl Default for Chessboard {
     fn default() -> Self {
-        Self::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
+        Self::from_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 0")
     }
 }
