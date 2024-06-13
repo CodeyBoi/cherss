@@ -3,9 +3,9 @@ use std::time::Duration;
 use chessboard::Chessboard;
 use sdl2::{event::Event, keyboard::Keycode, pixels::Color, render::Canvas, video::Window};
 
-mod bot;
 mod chessboard;
 mod piece;
+mod player;
 
 fn main() {
     let ctx = sdl2::init().unwrap();

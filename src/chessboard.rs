@@ -4,7 +4,10 @@ use sdl2::{
     keyboard::Keycode, pixels::Color as SDLColor, rect::Rect, render::Canvas, video::Window,
 };
 
-use crate::piece::{Color, Piece, PieceType};
+use crate::{
+    piece::{Color, Piece, PieceType},
+    player::{BotStrategy, Player},
+};
 
 pub const SIZE: usize = 8;
 
@@ -147,8 +150,28 @@ impl ChessGame {
         if let Some(last_interact) = self.active_tile {
             // If move is successful, reset active tile
             if let Ok(()) = self.board.make_move(last_interact, pos) {
+                match self.board.current_turn_color() {
+                    Color::White => {
+                        if let Player::Bot(strat) = self.board.white_player {
+                            if let Some((from, to)) = strat.choose_move(&mut self.board) {
+                                self.board
+                                    .make_move(from, to)
+                                    .expect("bot chose invalid move");
+                            }
+                        }
+                    }
+                    Color::Black => {
+                        if let Player::Bot(strat) = self.board.black_player {
+                            if let Some((from, to)) = strat.choose_move(&mut self.board) {
+                                self.board
+                                    .make_move(from, to)
+                                    .expect("bot chose invalid move");
+                            }
+                        }
+                    }
+                }
                 self.active_tile = None;
-                println!("{}", self.board.to_fen());
+                return;
             }
         }
 
@@ -274,7 +297,9 @@ pub struct Chessboard {
     en_passant_target: Option<Position>,
     start_turn_number: u32,
     white_king: Position,
+    white_player: Player,
     black_king: Position,
+    black_player: Player,
 }
 
 impl Chessboard {
@@ -287,7 +312,9 @@ impl Chessboard {
             en_passant_target: None,
             start_turn_number: 0,
             white_king: Position::new(0, 0),
+            white_player: Player::Human,
             black_king: Position::new(0, 0),
+            black_player: Player::Bot(BotStrategy::Random),
         }
     }
 
@@ -301,7 +328,7 @@ impl Chessboard {
         let mut input = fen.split_ascii_whitespace();
         let fen_board = input.next().expect("FEN string should contain text");
 
-        let (mut row, mut col) = (7, 0);
+        let (mut row, mut col) = (SIZE - 1, 0);
         for c in fen_board.chars() {
             if let Some(d) = c.to_digit(10) {
                 for _ in 0..d {
@@ -434,12 +461,9 @@ impl Chessboard {
     pub fn make_move(&mut self, from: Position, to: Position) -> Result<(), ChessMoveError> {
         let legal_moves = self.moves(from);
         if !legal_moves.iter().any(|m| *m == to) {
-            println!("Not allowed!");
             return Err(ChessMoveError::IllegalMove);
         }
-        let res = self.make_move_unchecked(from, to);
-        println!("{:#?}", self.history);
-        res
+        self.make_move_unchecked(from, to)
     }
 
     pub(crate) fn make_move_unchecked(
@@ -447,6 +471,7 @@ impl Chessboard {
         from: Position,
         to: Position,
     ) -> Result<(), ChessMoveError> {
+        // TODO: Add promotion
         if !from.in_bounds() || !to.in_bounds() {
             return Err(ChessMoveError::OutOfBounds);
         }
@@ -509,6 +534,42 @@ impl Chessboard {
         }
     }
 
+    pub fn pieces(&self) -> Vec<(Piece, Position)> {
+        self.board
+            .iter()
+            .enumerate()
+            .flat_map(|(row, row_pieces)| {
+                row_pieces
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(col, piece)| {
+                        piece
+                            .as_ref()
+                            .map(|piece| (*piece, Position::new(row as i8, col as i8)))
+                    })
+            })
+            .collect::<Vec<_>>()
+    }
+
+    pub fn all_moves(&mut self) -> Vec<(Position, Position)> {
+        let current_turn = self.current_turn_color();
+        self.pieces()
+            .iter()
+            .flat_map(|&(piece, pos)| {
+                self.moves(pos)
+                    .iter()
+                    .filter_map(|&m| {
+                        if piece.color == current_turn {
+                            Some((pos, m))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>()
+    }
+
     pub fn turn_number(&self) -> u32 {
         self.moves_made() / 2
     }
@@ -540,8 +601,6 @@ impl Chessboard {
             // No moves have been made, do nothing
             return;
         };
-
-        println!("Undoing {:#?}", cmove);
 
         self.board[from.row as usize][from.col as usize] = self.at(to);
         self.board[to.row as usize][to.col as usize] = None;
@@ -661,17 +720,19 @@ impl Chessboard {
         false
     }
 
-    pub fn moves(&mut self, pos: Position) -> Vec<Position> {
+    fn try_move(&mut self, from: Position, to: Position) -> bool {
         let current_turn = self.current_turn_color();
-        self.generate_moves(pos)
+        self.make_move_unchecked(from, to).unwrap();
+        let ret = !self.is_king_in_check(current_turn);
+        self.undo();
+        ret
+    }
+
+    pub fn moves(&mut self, from: Position) -> Vec<Position> {
+        self.generate_moves(from)
             .iter()
             .cloned()
-            .filter(|to| {
-                self.make_move_unchecked(pos, *to).unwrap();
-                let ret = !self.is_king_in_check(current_turn);
-                self.undo();
-                ret
-            })
+            .filter(|&to| self.try_move(from, to))
             .collect()
     }
 
@@ -691,7 +752,6 @@ impl Chessboard {
     }
 
     fn pawn_moves(&self, color: Color, pos: Position) -> Vec<Position> {
-        // TODO: Add promotion
         let row_offset = match color {
             Color::White => 1,
             Color::Black => -1,
