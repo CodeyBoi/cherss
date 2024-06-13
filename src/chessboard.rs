@@ -179,16 +179,18 @@ impl ChessGame {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Position {
     row: i8,
     col: i8,
 }
 
+#[derive(Debug)]
 pub struct ChessMove {
     from: Position,
     to: Position,
     captured_piece: Option<Piece>,
+    en_passant_capture_pos: Option<Position>,
 }
 
 impl Position {
@@ -432,12 +434,19 @@ impl Chessboard {
     pub fn make_move(&mut self, from: Position, to: Position) -> Result<(), ChessMoveError> {
         let legal_moves = self.moves(from);
         if !legal_moves.iter().any(|m| *m == to) {
+            println!("Not allowed!");
             return Err(ChessMoveError::IllegalMove);
         }
-        self.make_move_unchecked(from, to)
+        let res = self.make_move_unchecked(from, to);
+        println!("{:#?}", self.history);
+        res
     }
 
-    fn make_move_unchecked(&mut self, from: Position, to: Position) -> Result<(), ChessMoveError> {
+    pub(crate) fn make_move_unchecked(
+        &mut self,
+        from: Position,
+        to: Position,
+    ) -> Result<(), ChessMoveError> {
         if !from.in_bounds() || !to.in_bounds() {
             return Err(ChessMoveError::OutOfBounds);
         }
@@ -450,13 +459,8 @@ impl Chessboard {
                     }
                 }
 
-                self.board[to.row as usize][to.col as usize] = Some(piece);
-                self.board[from.row as usize][from.col as usize] = None;
-                self.history.push(ChessMove {
-                    from,
-                    to,
-                    captured_piece: other,
-                });
+                let mut captured_piece = other;
+                let mut en_passant_pos = None;
 
                 // Update king positions
                 if piece.piece == PieceType::King {
@@ -465,6 +469,39 @@ impl Chessboard {
                         Color::Black => self.black_king = to,
                     }
                 }
+
+                let row_offset = match piece.color {
+                    Color::White => -1,
+                    Color::Black => 1,
+                };
+
+                // Remove opposing pawn if en passant capture was made
+                if let Some(en_passant_target) = self.en_passant_target {
+                    // If a pawn got to en passant target then move must have been en passant
+                    if piece.piece == PieceType::Pawn && to == en_passant_target {
+                        let pos = Position::new(to.row + row_offset, to.col);
+                        captured_piece = self.at(pos);
+                        en_passant_pos = Some(pos);
+                        self.board[pos.row as usize][pos.col as usize] = None;
+                    }
+                }
+
+                // Update en passant target
+                self.en_passant_target =
+                    if piece.piece == PieceType::Pawn && from.row.abs_diff(to.row) == 2 {
+                        Some(Position::new(to.row + row_offset, to.col))
+                    } else {
+                        None
+                    };
+
+                self.board[to.row as usize][to.col as usize] = Some(piece);
+                self.board[from.row as usize][from.col as usize] = None;
+                self.history.push(ChessMove {
+                    from,
+                    to,
+                    captured_piece,
+                    en_passant_capture_pos: en_passant_pos,
+                });
 
                 Ok(())
             }
@@ -491,18 +528,59 @@ impl Chessboard {
     }
 
     pub fn undo(&mut self) {
-        let Some(ChessMove {
-            from,
-            to,
-            captured_piece,
-        }) = self.history.pop()
+        let Some(
+            cmove @ ChessMove {
+                from,
+                to,
+                captured_piece,
+                en_passant_capture_pos: en_passant_pos,
+            },
+        ) = self.history.pop()
         else {
             // No moves have been made, do nothing
             return;
         };
-        // TODO: Add handling of moving a king piece
+
+        println!("Undoing {:#?}", cmove);
+
         self.board[from.row as usize][from.col as usize] = self.at(to);
-        self.board[to.row as usize][to.col as usize] = captured_piece;
+        self.board[to.row as usize][to.col as usize] = None;
+        let return_pos = en_passant_pos.unwrap_or(to);
+        self.board[return_pos.row as usize][return_pos.col as usize] = captured_piece;
+
+        if let Some(piece) = self.at(from) {
+            // Update king position
+            if piece.piece == PieceType::King {
+                match piece.color {
+                    Color::White => self.white_king = from,
+                    Color::Black => self.black_king = from,
+                }
+            }
+        }
+
+        // Update en passant target
+        self.en_passant_target = if let Some(last_move) = self.history.last() {
+            if let Some(piece) = self.at(last_move.to) {
+                if piece.piece == PieceType::Pawn
+                    && last_move.from.row.abs_diff(last_move.to.row) == 2
+                {
+                    let row_offset = match piece.color {
+                        Color::White => -1,
+                        Color::Black => 1,
+                    };
+                    Some(Position::new(
+                        last_move.to.row + row_offset,
+                        last_move.to.col,
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
     }
 
     pub fn at(&self, pos: Position) -> Option<Piece> {
@@ -514,36 +592,6 @@ impl Chessboard {
     }
 
     fn is_king_in_check(&mut self, color: Color) -> bool {
-        // // Check if any opposing pieces can capture the king
-        // for (row, row_tiles) in self.board.iter().enumerate() {
-        //     for (col, piece) in row_tiles.iter().enumerate() {
-        //         if piece.is_none() {
-        //             continue;
-        //         }
-        //         if let Some(Piece { color, .. }) = piece {
-        //             if *color == current_turn {
-        //                 // Current piece is the same color as the piece that just moved, skip
-        //                 continue;
-        //             }
-        //         }
-
-        //         // Check if any possible move can capture the king
-        //         let pos = Position::new(row as i8, col as i8);
-        //         for mov in &self.generate_moves(pos) {
-        //             if let Some(Piece {
-        //                 color,
-        //                 piece: PieceType::King,
-        //             }) = self.at(*mov)
-        //             {
-        //                 if color == current_turn {
-        //                     self.undo();
-        //                     return false;
-        //                 }
-        //             }
-        //         }
-        //     }
-        // }
-
         let pos = match color {
             Color::White => self.white_king,
             Color::Black => self.black_king,
@@ -643,7 +691,7 @@ impl Chessboard {
     }
 
     fn pawn_moves(&self, color: Color, pos: Position) -> Vec<Position> {
-        // TODO: Add en passant and promotion
+        // TODO: Add promotion
         let row_offset = match color {
             Color::White => 1,
             Color::Black => -1,
@@ -670,38 +718,10 @@ impl Chessboard {
                     moves.push(new_pos);
                 }
             }
-            // TODO: Make this use the struct field `en_passant_target`
             // Check for en passant
-            else if let Some(m) = self.history.last() {
-                let above = Position::new(new_pos.row + 1, new_pos.col);
-                let below = Position::new(new_pos.row - 1, new_pos.col);
-
-                match (color, self.at(above), self.at(below)) {
-                    (
-                        Color::White,
-                        None,
-                        Some(Piece {
-                            color: Color::Black,
-                            piece: PieceType::Pawn,
-                        }),
-                    ) => {
-                        if m.from == above && m.to == below {
-                            moves.push(new_pos);
-                        }
-                    }
-                    (
-                        Color::Black,
-                        Some(Piece {
-                            color: Color::White,
-                            piece: PieceType::Pawn,
-                        }),
-                        None,
-                    ) => {
-                        if m.from == below && m.to == above {
-                            moves.push(new_pos);
-                        }
-                    }
-                    _ => {}
+            else if let Some(pos) = self.en_passant_target {
+                if pos == new_pos {
+                    moves.push(new_pos);
                 }
             }
         }
