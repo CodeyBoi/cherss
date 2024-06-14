@@ -1,6 +1,6 @@
 #[derive(Clone, Copy, Debug)]
 pub struct Piece {
-    pub color: Color,
+    pub color: ChessColor,
     pub piece: PieceType,
 }
 
@@ -28,21 +28,21 @@ impl PieceType {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Color {
+pub enum ChessColor {
     White,
     Black,
 }
 
 impl Piece {
-    pub fn new(color: Color, piece: PieceType) -> Self {
+    pub fn new(color: ChessColor, piece: PieceType) -> Self {
         Self { color, piece }
     }
 
     pub fn from_fen(fen: char) -> Option<Self> {
         let color = if fen.is_uppercase() {
-            Color::White
+            ChessColor::White
         } else {
-            Color::Black
+            ChessColor::Black
         };
         let piece = match fen.to_ascii_lowercase() {
             'p' => PieceType::Pawn,
@@ -58,7 +58,7 @@ impl Piece {
 
     pub fn to_fen(self) -> char {
         let c = self.piece.to_char();
-        if self.color == Color::White {
+        if self.color == ChessColor::White {
             c
         } else {
             c.to_ascii_lowercase()

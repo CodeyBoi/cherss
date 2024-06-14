@@ -1,219 +1,25 @@
 use std::{fmt::Display, str::FromStr};
 
-use sdl2::{
-    keyboard::Keycode, pixels::Color as SDLColor, rect::Rect, render::Canvas, video::Window,
-};
-
 use crate::{
-    piece::{Color, Piece, PieceType},
+    chessgame::ChessGame,
+    piece::{ChessColor, Piece, PieceType},
     player::{BotStrategy, Player},
 };
 
 pub const SIZE: usize = 8;
 
-pub struct ChessGame {
-    board: Chessboard,
-    active_tile: Option<Position>,
-}
-
-impl ChessGame {
-    pub fn render(&mut self, canvas: &mut Canvas<Window>) {
-        self.draw_chessboard(canvas);
-        self.draw_highlights(canvas);
-        self.draw_pieces(canvas);
-    }
-
-    fn draw_chessboard(&self, canvas: &mut Canvas<Window>) {
-        let size = canvas.output_size().unwrap();
-        let tile_size = size.0.min(size.1) / SIZE as u32;
-        for (row, tile_row) in self.board.board.iter().enumerate() {
-            for (col, _) in tile_row.iter().enumerate() {
-                let row = 7 - row;
-                let color = if (row + col) % 2 == 0 {
-                    SDLColor::RGB(240, 217, 181)
-                } else {
-                    SDLColor::RGB(181, 136, 99)
-                };
-                canvas.set_draw_color(color);
-
-                canvas
-                    .fill_rect(Rect::new(
-                        col as i32 * tile_size as i32,
-                        row as i32 * tile_size as i32,
-                        tile_size,
-                        tile_size,
-                    ))
-                    .unwrap();
-            }
-        }
-    }
-
-    fn draw_highlights(&mut self, canvas: &mut Canvas<Window>) {
-        let size = canvas.output_size().unwrap();
-        let tile_size = size.0.min(size.1) / SIZE as u32;
-
-        // Highlight last move
-        if let Some(prev_move) = self.board.history.last() {
-            for Position { row, col } in [prev_move.from, prev_move.to] {
-                let row = 7 - row;
-                let color = if (row + col) % 2 == 0 {
-                    SDLColor::RGB(205, 210, 106)
-                } else {
-                    SDLColor::RGB(170, 162, 58)
-                };
-                canvas.set_draw_color(color);
-                canvas
-                    .fill_rect(Rect::new(
-                        col as i32 * tile_size as i32,
-                        row as i32 * tile_size as i32,
-                        tile_size,
-                        tile_size,
-                    ))
-                    .unwrap();
-            }
-        }
-
-        // Highlight all moves the active piece can make
-        if let Some(active_tile) = self.active_tile {
-            let color = SDLColor::RGBA(55, 180, 55, 75);
-            let margin = 40;
-            canvas.set_draw_color(color);
-            let (row, col) = (7 - active_tile.row, active_tile.col);
-            canvas
-                .fill_rect(Rect::new(
-                    col as i32 * tile_size as i32,
-                    row as i32 * tile_size as i32,
-                    tile_size,
-                    tile_size,
-                ))
-                .unwrap();
-
-            for pos @ Position { row, col } in self.board.moves(active_tile) {
-                let row = 7 - row;
-                // Highlight pieces that can be captured
-                if self.board.at(pos).is_some() {
-                    for i in 0..5 {
-                        canvas
-                            .draw_rect(Rect::new(
-                                col as i32 * tile_size as i32 + i,
-                                row as i32 * tile_size as i32 + i,
-                                tile_size - i as u32 * 2,
-                                tile_size - i as u32 * 2,
-                            ))
-                            .unwrap();
-                    }
-                // Highlight other tiles
-                } else {
-                    canvas
-                        .fill_rect(Rect::new(
-                            col as i32 * tile_size as i32 + margin,
-                            row as i32 * tile_size as i32 + margin,
-                            tile_size - margin as u32 * 2,
-                            tile_size - margin as u32 * 2,
-                        ))
-                        .unwrap();
-                }
-            }
-        }
-    }
-
-    fn draw_pieces(&self, canvas: &mut Canvas<Window>) {
-        let size = canvas.output_size().unwrap();
-        let tile_size = size.0.min(size.1) / SIZE as u32;
-        let margin = 20;
-        for (row, tile_row) in self.board.board.iter().enumerate() {
-            for (col, piece) in tile_row.iter().enumerate() {
-                let row = 7 - row;
-                if let Some(piece) = piece {
-                    let color = match piece.color {
-                        Color::White => SDLColor::RED,
-                        Color::Black => SDLColor::BLUE,
-                    };
-                    canvas.set_draw_color(color);
-                    canvas
-                        .fill_rect(Rect::new(
-                            col as i32 * tile_size as i32 + margin,
-                            row as i32 * tile_size as i32 + margin,
-                            tile_size - margin as u32 * 2,
-                            tile_size - margin as u32 * 2,
-                        ))
-                        .unwrap();
-                }
-            }
-        }
-    }
-
-    pub fn handle_click(&mut self, row: u8, col: u8) {
-        let pos = Position::new(row as i8, col as i8);
-
-        // If we have an active tile, try to move
-        if let Some(last_interact) = self.active_tile {
-            // If move is successful, reset active tile
-            if let Ok(()) = self.board.make_move(last_interact, pos) {
-                match self.board.current_turn_color() {
-                    Color::White => {
-                        if let Player::Bot(strat) = self.board.white_player {
-                            if let Some((from, to)) = strat.choose_move(&mut self.board) {
-                                self.board
-                                    .make_move(from, to)
-                                    .expect("bot chose invalid move");
-                            }
-                        }
-                    }
-                    Color::Black => {
-                        if let Player::Bot(strat) = self.board.black_player {
-                            if let Some((from, to)) = strat.choose_move(&mut self.board) {
-                                self.board
-                                    .make_move(from, to)
-                                    .expect("bot chose invalid move");
-                            }
-                        }
-                    }
-                }
-                self.active_tile = None;
-                return;
-            }
-        }
-
-        // Check if we pressed a piece and in that case set that tile as the active tile
-        if let Some(piece) = self.board.at(pos) {
-            if piece.color == self.board.current_turn_color() {
-                self.active_tile = Some(pos);
-            }
-        }
-        // If we clicked an empty tile, clear active tile
-        else {
-            self.active_tile = None;
-        }
-    }
-
-    pub fn handle_keypress(&mut self, keycode: Keycode) {
-        match keycode {
-            Keycode::U => {
-                self.board.undo();
-                self.active_tile = None;
-            }
-            Keycode::R => {
-                self.board = Chessboard::default();
-                self.active_tile = None;
-            }
-            _ => {}
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Position {
-    row: i8,
-    col: i8,
+    pub row: i8,
+    pub col: i8,
 }
 
 #[derive(Debug)]
 pub struct ChessMove {
-    from: Position,
-    to: Position,
-    captured_piece: Option<Piece>,
-    en_passant_capture_pos: Option<Position>,
+    pub from: Position,
+    pub to: Position,
+    pub captured_piece: Option<Piece>,
+    pub en_passant_capture_pos: Option<Position>,
 }
 
 impl Position {
@@ -261,38 +67,38 @@ pub enum CastlingSide {
 #[derive(Clone, Copy)]
 pub struct CastlingRight {
     side: CastlingSide,
-    color: Color,
+    color: ChessColor,
 }
 
 impl CastlingRight {
     const STANDARD: [Self; 4] = [
         Self {
             side: CastlingSide::KingSide,
-            color: Color::White,
+            color: ChessColor::White,
         },
         Self {
             side: CastlingSide::QueenSide,
-            color: Color::White,
+            color: ChessColor::White,
         },
         Self {
             side: CastlingSide::KingSide,
-            color: Color::Black,
+            color: ChessColor::Black,
         },
         Self {
             side: CastlingSide::QueenSide,
-            color: Color::Black,
+            color: ChessColor::Black,
         },
     ];
 
-    pub fn new(color: Color, side: CastlingSide) -> Self {
+    pub fn new(color: ChessColor, side: CastlingSide) -> Self {
         Self { color, side }
     }
 }
 
 pub struct Chessboard {
     pub board: [[Option<Piece>; SIZE]; SIZE],
-    history: Vec<ChessMove>,
-    first_turn_color: Color,
+    pub history: Vec<ChessMove>,
+    first_turn_color: ChessColor,
     castling_rights: Vec<CastlingRight>,
     en_passant_target: Option<Position>,
     start_turn_number: u32,
@@ -307,7 +113,7 @@ impl Chessboard {
         Self {
             board: [[None; SIZE]; SIZE],
             history: Vec::new(),
-            first_turn_color: Color::White,
+            first_turn_color: ChessColor::White,
             castling_rights: CastlingRight::STANDARD.to_vec(),
             en_passant_target: None,
             start_turn_number: 0,
@@ -338,8 +144,8 @@ impl Chessboard {
             } else if let Some(piece) = Piece::from_fen(c) {
                 if piece.piece == PieceType::King {
                     match piece.color {
-                        Color::White => self.white_king = Position::new(row as i8, col as i8),
-                        Color::Black => self.black_king = Position::new(row as i8, col as i8),
+                        ChessColor::White => self.white_king = Position::new(row as i8, col as i8),
+                        ChessColor::Black => self.black_king = Position::new(row as i8, col as i8),
                     }
                 }
                 self.board[row][col] = Some(piece);
@@ -353,8 +159,8 @@ impl Chessboard {
 
         self.first_turn_color = match input.next() {
             Some(current_turn) => match current_turn {
-                "w" => Color::White,
-                "b" => Color::Black,
+                "w" => ChessColor::White,
+                "b" => ChessColor::Black,
                 _ => return Err(ParseFENError::InvalidTurn),
             },
             None => return Err(ParseFENError::IncompleteString),
@@ -365,10 +171,22 @@ impl Chessboard {
             .unwrap()
             .chars()
             .filter_map(|c| match c {
-                'K' => Some(CastlingRight::new(Color::White, CastlingSide::KingSide)),
-                'Q' => Some(CastlingRight::new(Color::White, CastlingSide::QueenSide)),
-                'k' => Some(CastlingRight::new(Color::Black, CastlingSide::KingSide)),
-                'q' => Some(CastlingRight::new(Color::Black, CastlingSide::QueenSide)),
+                'K' => Some(CastlingRight::new(
+                    ChessColor::White,
+                    CastlingSide::KingSide,
+                )),
+                'Q' => Some(CastlingRight::new(
+                    ChessColor::White,
+                    CastlingSide::QueenSide,
+                )),
+                'k' => Some(CastlingRight::new(
+                    ChessColor::Black,
+                    CastlingSide::KingSide,
+                )),
+                'q' => Some(CastlingRight::new(
+                    ChessColor::Black,
+                    CastlingSide::QueenSide,
+                )),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -411,8 +229,8 @@ impl Chessboard {
         fen.push(' ');
 
         fen.push(match self.current_turn_color() {
-            Color::White => 'w',
-            Color::Black => 'b',
+            ChessColor::White => 'w',
+            ChessColor::Black => 'b',
         });
         fen.push(' ');
 
@@ -425,8 +243,8 @@ impl Chessboard {
                     CastlingSide::QueenSide => 'Q',
                 };
                 match cr.color {
-                    Color::White => c,
-                    Color::Black => c.to_ascii_lowercase(),
+                    ChessColor::White => c,
+                    ChessColor::Black => c.to_ascii_lowercase(),
                 }
             })
             .collect::<String>();
@@ -452,10 +270,7 @@ impl Chessboard {
     }
 
     pub fn into_game(self) -> ChessGame {
-        ChessGame {
-            board: self,
-            active_tile: None,
-        }
+        ChessGame::new(self)
     }
 
     pub fn make_move(&mut self, from: Position, to: Position) -> Result<(), ChessMoveError> {
@@ -490,14 +305,14 @@ impl Chessboard {
                 // Update king positions
                 if piece.piece == PieceType::King {
                     match piece.color {
-                        Color::White => self.white_king = to,
-                        Color::Black => self.black_king = to,
+                        ChessColor::White => self.white_king = to,
+                        ChessColor::Black => self.black_king = to,
                     }
                 }
 
                 let row_offset = match piece.color {
-                    Color::White => -1,
-                    Color::Black => 1,
+                    ChessColor::White => -1,
+                    ChessColor::Black => 1,
                 };
 
                 // Remove opposing pawn if en passant capture was made
@@ -576,27 +391,32 @@ impl Chessboard {
 
     fn moves_made(&self) -> u32 {
         self.start_turn_number * 2
-            + (self.first_turn_color == Color::Black) as u32
+            + (self.first_turn_color == ChessColor::Black) as u32
             + self.history.len() as u32
     }
 
-    pub fn current_turn_color(&self) -> Color {
+    pub fn current_turn_color(&self) -> ChessColor {
         if self.moves_made() % 2 == 0 {
-            Color::White
+            ChessColor::White
         } else {
-            Color::Black
+            ChessColor::Black
+        }
+    }
+
+    pub fn current_player(&self) -> Player {
+        match self.current_turn_color() {
+            ChessColor::White => self.white_player,
+            ChessColor::Black => self.black_player,
         }
     }
 
     pub fn undo(&mut self) {
-        let Some(
-            cmove @ ChessMove {
-                from,
-                to,
-                captured_piece,
-                en_passant_capture_pos: en_passant_pos,
-            },
-        ) = self.history.pop()
+        let Some(ChessMove {
+            from,
+            to,
+            captured_piece,
+            en_passant_capture_pos: en_passant_pos,
+        }) = self.history.pop()
         else {
             // No moves have been made, do nothing
             return;
@@ -611,8 +431,8 @@ impl Chessboard {
             // Update king position
             if piece.piece == PieceType::King {
                 match piece.color {
-                    Color::White => self.white_king = from,
-                    Color::Black => self.black_king = from,
+                    ChessColor::White => self.white_king = from,
+                    ChessColor::Black => self.black_king = from,
                 }
             }
         }
@@ -624,8 +444,8 @@ impl Chessboard {
                     && last_move.from.row.abs_diff(last_move.to.row) == 2
                 {
                     let row_offset = match piece.color {
-                        Color::White => -1,
-                        Color::Black => 1,
+                        ChessColor::White => -1,
+                        ChessColor::Black => 1,
                     };
                     Some(Position::new(
                         last_move.to.row + row_offset,
@@ -650,10 +470,10 @@ impl Chessboard {
         }
     }
 
-    fn is_king_in_check(&mut self, color: Color) -> bool {
+    fn is_king_in_check(&mut self, color: ChessColor) -> bool {
         let pos = match color {
-            Color::White => self.white_king,
-            Color::Black => self.black_king,
+            ChessColor::White => self.white_king,
+            ChessColor::Black => self.black_king,
         };
 
         if self
@@ -751,10 +571,10 @@ impl Chessboard {
         }
     }
 
-    fn pawn_moves(&self, color: Color, pos: Position) -> Vec<Position> {
+    fn pawn_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
         let row_offset = match color {
-            Color::White => 1,
-            Color::Black => -1,
+            ChessColor::White => 1,
+            ChessColor::Black => -1,
         };
         let mut moves = Vec::new();
         let new_pos = Position::new(pos.row + row_offset, pos.col);
@@ -762,8 +582,8 @@ impl Chessboard {
             moves.push(new_pos);
 
             // Check for first move
-            let has_moved =
-                (color == Color::White && pos.row != 1) || (color == Color::Black && pos.row != 6);
+            let has_moved = (color == ChessColor::White && pos.row != 1)
+                || (color == ChessColor::Black && pos.row != 6);
             let new_pos = Position::new(pos.row + row_offset * 2, pos.col);
             if !has_moved && self.at(new_pos).is_none() {
                 moves.push(new_pos);
@@ -801,19 +621,19 @@ impl Chessboard {
         (1, 2),
     ];
 
-    fn knight_moves(&self, color: Color, pos: Position) -> Vec<Position> {
+    fn knight_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
         self.moves_with_offsets(color, pos, Self::KNIGHT_MOVES.to_vec())
     }
 
-    fn bishop_moves(&self, color: Color, pos: Position) -> Vec<Position> {
+    fn bishop_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
         self.moves_with_directions(color, pos, Self::DIAGONAL_DIRECTIONS.to_vec())
     }
 
-    fn rook_moves(&self, color: Color, pos: Position) -> Vec<Position> {
+    fn rook_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
         self.moves_with_directions(color, pos, Self::CARDINAL_DIRECTIONS.to_vec())
     }
 
-    fn queen_moves(&self, color: Color, pos: Position) -> Vec<Position> {
+    fn queen_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
         self.moves_with_directions(
             color,
             pos,
@@ -821,7 +641,7 @@ impl Chessboard {
         )
     }
 
-    fn king_moves(&self, color: Color, pos: Position) -> Vec<Position> {
+    fn king_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
         // TODO: Add castling
 
         self.moves_with_offsets(
@@ -842,7 +662,7 @@ impl Chessboard {
 
     fn moves_with_directions(
         &self,
-        color: Color,
+        color: ChessColor,
         pos: Position,
         directions: Vec<(i8, i8)>,
     ) -> Vec<Position> {
@@ -873,7 +693,7 @@ impl Chessboard {
 
     fn moves_with_offsets(
         &self,
-        color: Color,
+        color: ChessColor,
         pos: Position,
         offsets: Vec<(i8, i8)>,
     ) -> Vec<Position> {

@@ -4,6 +4,7 @@ use chessboard::Chessboard;
 use sdl2::{event::Event, keyboard::Keycode, pixels::Color, render::Canvas, video::Window};
 
 mod chessboard;
+mod chessgame;
 mod piece;
 mod player;
 
@@ -73,5 +74,3 @@ fn main() {
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
 }
-
-fn render_chessboard(canvas: &mut Canvas<Window>, chessboard: &Chessboard) {}
