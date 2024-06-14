@@ -1,7 +1,10 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use chessboard::Chessboard;
-use sdl2::{event::Event, keyboard::Keycode, pixels::Color, render::Canvas, video::Window};
+use sdl2::{
+    event::Event, keyboard::Keycode, mouse::MouseButton, pixels::Color, render::Canvas,
+    video::Window,
+};
 
 mod chessboard;
 mod chessgame;
@@ -41,17 +44,11 @@ fn main() {
                 Event::KeyDown {
                     keycode: Some(keycode),
                     ..
-                } => {
-                    chess.handle_keypress(keycode);
-                    canvas.clear();
-                    chess.render(&mut canvas);
-                    canvas.present();
-                }
-                event @ Event::MouseButtonDown {
-                    mouse_btn,
+                } => chess.handle_keypress(keycode),
+                Event::MouseButtonDown {
+                    mouse_btn: MouseButton::Left,
                     x,
                     y,
-                    clicks,
                     ..
                 } => {
                     let size = canvas.output_size().unwrap();
@@ -59,17 +56,16 @@ fn main() {
                     let (row, col) = (7 - (y / tile_size as i32), x / tile_size as i32);
 
                     chess.handle_click(row as u8, col as u8);
-
-                    canvas.set_draw_color(Color::WHITE);
-                    canvas.clear();
-                    chess.render(&mut canvas);
-                    canvas.present();
                 }
                 _ => {}
             }
         }
 
-        // GAME LOOP CODE HERE
+        chess.make_bot_move();
+
+        canvas.clear();
+        chess.render(&mut canvas);
+        canvas.present();
 
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }

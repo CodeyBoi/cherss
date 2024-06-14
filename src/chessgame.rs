@@ -145,6 +145,16 @@ impl ChessGame {
         }
     }
 
+    pub fn make_bot_move(&mut self) {
+        if let Player::Bot(strat) = self.board.current_player() {
+            if let Some((from, to)) = strat.choose_move(&mut self.board) {
+                self.board
+                    .make_move(from, to)
+                    .expect("bot should't be able to choose an invalid move");
+            }
+        }
+    }
+
     pub fn handle_click(&mut self, row: u8, col: u8) {
         let pos = Position::new(row as i8, col as i8);
 
@@ -152,13 +162,6 @@ impl ChessGame {
         if let Some(last_interact) = self.active_tile {
             // If move is successful, reset active tile
             if let Ok(()) = self.board.make_move(last_interact, pos) {
-                if let Player::Bot(strat) = self.board.current_player() {
-                    if let Some((from, to)) = strat.choose_move(&mut self.board) {
-                        self.board
-                            .make_move(from, to)
-                            .expect("bot should't be able to choose an invalid move");
-                    }
-                }
                 self.active_tile = None;
                 return;
             }
@@ -179,8 +182,9 @@ impl ChessGame {
     pub fn handle_keypress(&mut self, keycode: Keycode) {
         match keycode {
             Keycode::U => {
-                self.board.undo();
                 self.active_tile = None;
+                self.board.undo();
+                self.board.undo();
             }
             Keycode::R => {
                 self.board = Chessboard::default();

@@ -1,3 +1,4 @@
+use core::panic;
 use std::{fmt::Display, str::FromStr};
 
 use crate::{
@@ -46,7 +47,7 @@ impl Display for Position {
 
 #[derive(Debug)]
 pub enum ChessMoveError {
-    OutOfBounds,
+    OutOfBounds((Position, Position)),
     MissingPiece,
     SameColorCapture,
     IllegalMove,
@@ -288,7 +289,7 @@ impl Chessboard {
     ) -> Result<(), ChessMoveError> {
         // TODO: Add promotion
         if !from.in_bounds() || !to.in_bounds() {
-            return Err(ChessMoveError::OutOfBounds);
+            return Err(ChessMoveError::OutOfBounds((from, to)));
         }
 
         match (self.at(from), self.at(to)) {
@@ -342,6 +343,15 @@ impl Chessboard {
                     captured_piece,
                     en_passant_capture_pos: en_passant_pos,
                 });
+
+                // // Check for checkmate
+                // if self.all_moves().is_empty() {
+                //     if self.is_king_in_check(self.current_turn_color()) {
+                //         println!("Checkmate!");
+                //     } else {
+                //         println!("Draw!");
+                //     }
+                // }
 
                 Ok(())
             }
@@ -542,7 +552,10 @@ impl Chessboard {
 
     fn try_move(&mut self, from: Position, to: Position) -> bool {
         let current_turn = self.current_turn_color();
-        self.make_move_unchecked(from, to).unwrap();
+
+        if let Err(ChessMoveError::OutOfBounds((from, to))) = self.make_move_unchecked(from, to) {
+            panic!("from={:?}, to={:?}", from, to);
+        }
         let ret = !self.is_king_in_check(current_turn);
         self.undo();
         ret
