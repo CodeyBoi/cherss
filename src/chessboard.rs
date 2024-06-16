@@ -47,10 +47,11 @@ impl Display for Position {
 
 #[derive(Debug)]
 pub enum ChessMoveError {
-    OutOfBounds((Position, Position)),
+    OutOfBounds,
     MissingPiece,
     SameColorCapture,
     IllegalMove,
+    GameHasEnded,
 }
 
 #[derive(Debug)]
@@ -96,6 +97,13 @@ impl CastlingRight {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ChessResult {
+    Undecided,
+    Draw,
+    Win(ChessColor),
+}
+
 pub struct Chessboard {
     pub board: [[Option<Piece>; SIZE]; SIZE],
     pub history: Vec<ChessMove>,
@@ -107,6 +115,8 @@ pub struct Chessboard {
     white_player: Player,
     black_king: Position,
     black_player: Player,
+    halfmove_clock: u8,
+    result: ChessResult,
 }
 
 impl Chessboard {
@@ -121,7 +131,17 @@ impl Chessboard {
             white_king: Position::new(0, 0),
             white_player: Player::Human,
             black_king: Position::new(0, 0),
-            black_player: Player::Bot(BotStrategy::Random),
+            black_player: Player::Human,
+            halfmove_clock: 0,
+            result: ChessResult::Undecided,
+        }
+    }
+
+    pub fn with_players(white_player: Player, black_player: Player) -> Self {
+        Self {
+            white_player,
+            black_player,
+            ..Default::default()
         }
     }
 
@@ -194,13 +214,17 @@ impl Chessboard {
 
         self.en_passant_target = Position::from_str(input.next().unwrap()).ok();
 
-        input.next(); // discard halfmove clock
+        self.halfmove_clock = input
+            .next()
+            .unwrap()
+            .parse()
+            .expect("Halfmove clock should consist of digits");
 
         self.start_turn_number = input
             .next()
             .unwrap()
             .parse()
-            .expect("Fullmove number could not be parsed");
+            .expect("Fullmove number should consist of digits");
 
         Ok(())
     }
@@ -263,7 +287,7 @@ impl Chessboard {
         }
         fen.push(' ');
 
-        fen.push_str("0 "); // halfmove clock
+        fen.push_str(&format!("{} ", self.halfmove_clock)); // halfmove clock
 
         fen.push_str(self.turn_number().to_string().as_str());
 
@@ -275,21 +299,57 @@ impl Chessboard {
     }
 
     pub fn make_move(&mut self, from: Position, to: Position) -> Result<(), ChessMoveError> {
+        if self.result != ChessResult::Undecided {
+            return Err(ChessMoveError::GameHasEnded);
+        }
+
         let legal_moves = self.moves(from);
         if !legal_moves.iter().any(|m| *m == to) {
             return Err(ChessMoveError::IllegalMove);
         }
-        self.make_move_unchecked(from, to)
+        self.move_piece(from, to)?;
+
+        // Reset halfmove clock if piece captured or pawn advanced
+        if let Some(ChessMove {
+            captured_piece: Some(_),
+            ..
+        }) = self.history.last()
+        {
+            self.halfmove_clock = 0;
+        } else if self
+            .at(to)
+            .is_some_and(|piece| piece.piece == PieceType::Pawn)
+        {
+            self.halfmove_clock = 0;
+        } else {
+            self.halfmove_clock += 1;
+        }
+
+        if self.halfmove_clock >= 50 {
+            self.result = ChessResult::Draw;
+        }
+
+        // Check for checkmate
+        let current_turn = self.current_turn_color();
+        if self.all_moves().is_empty() {
+            if self.is_king_in_check(current_turn) {
+                self.result = ChessResult::Win(current_turn);
+            } else {
+                self.result = ChessResult::Draw;
+            }
+        }
+
+        Ok(())
     }
 
-    pub(crate) fn make_move_unchecked(
+    pub(crate) fn move_piece(
         &mut self,
         from: Position,
         to: Position,
     ) -> Result<(), ChessMoveError> {
         // TODO: Add promotion
         if !from.in_bounds() || !to.in_bounds() {
-            return Err(ChessMoveError::OutOfBounds((from, to)));
+            return Err(ChessMoveError::OutOfBounds);
         }
 
         match (self.at(from), self.at(to)) {
@@ -344,15 +404,6 @@ impl Chessboard {
                     en_passant_capture_pos: en_passant_pos,
                 });
 
-                // // Check for checkmate
-                // if self.all_moves().is_empty() {
-                //     if self.is_king_in_check(self.current_turn_color()) {
-                //         println!("Checkmate!");
-                //     } else {
-                //         println!("Draw!");
-                //     }
-                // }
-
                 Ok(())
             }
             (None, _) => Err(ChessMoveError::MissingPiece),
@@ -381,16 +432,11 @@ impl Chessboard {
         self.pieces()
             .iter()
             .flat_map(|&(piece, pos)| {
-                self.moves(pos)
-                    .iter()
-                    .filter_map(|&m| {
-                        if piece.color == current_turn {
-                            Some((pos, m))
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
+                if piece.color == current_turn {
+                    self.moves(pos).iter().map(|&m| (pos, m)).collect()
+                } else {
+                    Vec::new()
+                }
             })
             .collect::<Vec<_>>()
     }
@@ -553,9 +599,11 @@ impl Chessboard {
     fn try_move(&mut self, from: Position, to: Position) -> bool {
         let current_turn = self.current_turn_color();
 
-        if let Err(ChessMoveError::OutOfBounds((from, to))) = self.make_move_unchecked(from, to) {
-            panic!("from={:?}, to={:?}", from, to);
-        }
+        match self.move_piece(from, to) {
+            Ok(_) => {}
+            // This means the move is invalid
+            Err(_) => return false,
+        };
         let ret = !self.is_king_in_check(current_turn);
         self.undo();
         ret

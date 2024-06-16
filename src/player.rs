@@ -28,10 +28,11 @@ impl BotStrategy {
     }
 
     pub fn dark_squares(board: &mut Chessboard) -> Option<(Position, Position)> {
-        board
-            .all_moves()
+        let moves = board.all_moves();
+        moves
             .iter()
-            .find(|&&pos| (pos.1.row + pos.1.col) % 2 == 1)
+            .find(|&&pos| (pos.1.row + pos.1.col) % 2 == 0 && (pos.0.row + pos.0.col) % 2 == 1)
+            .or_else(|| moves.iter().find(|&&pos| (pos.1.row + pos.1.col) % 2 == 0))
             .cloned()
             .or_else(|| Self::random(board))
     }

@@ -1,14 +1,39 @@
-use crate::player::Player;
-use sdl2::{keyboard::Keycode, pixels::Color, rect::Rect, render::Canvas, video::Window};
+use crate::{chessboard, piece::Piece, player::Player, tui::Tui};
+use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::{
+    layout::{Constraint, Layout, Rect},
+    style::Stylize,
+    widgets::Block,
+    Frame,
+};
+use sdl2::{
+    keyboard::Keycode, pixels::Color, rect::Rect as SDLRect, render::Canvas, video::Window,
+};
 
 use crate::{
     chessboard::{Chessboard, Position, SIZE},
     piece::ChessColor,
 };
 
+enum TileStatus {
+    Default,
+    Active,
+    CanMoveTo,
+    CanCaptureAt,
+}
+
+struct Tile {
+    piece: Piece,
+    status: TileStatus,
+    color: Color,
+}
+
 pub struct ChessGame {
     board: Chessboard,
     active_tile: Option<Position>,
+    pub bots_active: bool,
+    pub is_running: bool,
+    pub tile_size: u16,
 }
 
 impl ChessGame {
@@ -16,16 +41,86 @@ impl ChessGame {
         Self {
             board,
             active_tile: None,
+            bots_active: true,
+            is_running: true,
+            tile_size: 8,
         }
     }
 
-    pub fn render(&mut self, canvas: &mut Canvas<Window>) {
-        self.draw_chessboard(canvas);
-        self.draw_highlights(canvas);
-        self.draw_pieces(canvas);
+    pub fn render(&mut self, frame: &mut Frame) {
+        let app_area = frame.size();
+        let board_area = Rect {
+            height: self.tile_size * SIZE as u16,
+            width: self.tile_size * SIZE as u16,
+            ..app_area
+        };
+        let binding =
+            Layout::vertical([Constraint::Length(self.tile_size / 2); SIZE]).split(board_area);
+        let rows = binding.iter().rev();
+        let tiles = rows.flat_map(|row| {
+            Layout::horizontal([Constraint::Length(self.tile_size); SIZE])
+                .split(*row)
+                .to_vec()
+        });
+        for (i, tile_area) in tiles.enumerate() {
+            let pos = Position::new((i / SIZE) as i8, (i % SIZE) as i8);
+            frame.render_widget(Block::bordered().gray().on_black(), tile_area);
+            if let Some(piece) = self.board.at(pos) {
+                frame.render_widget(piece, tile_area);
+            }
+        }
     }
 
-    fn draw_chessboard(&self, canvas: &mut Canvas<Window>) {
+    pub fn handle_key_press(&mut self, code: KeyCode) {
+        use KeyCode as K;
+        match code {
+            K::Char('Q' | 'q') => {
+                self.is_running = false;
+            }
+            K::Char('U' | 'u') => {
+                self.active_tile = None;
+                self.board.undo();
+                self.board.undo();
+            }
+            K::Char('R' | 'r') => {
+                self.board = Chessboard::default();
+                self.active_tile = None;
+            }
+            K::Char('B' | 'b') => {
+                self.bots_active = !self.bots_active;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn handle_mouse_event(&mut self, event: MouseEvent) {
+        if let MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            row: m_row,
+            column: m_col,
+            ..
+        } = event
+        {
+            let (row, col) = (
+                chessboard::SIZE as u16 - 1 - (m_row * 2 / self.tile_size),
+                m_col / self.tile_size,
+            );
+            print!("{row},{col}\r");
+            self.handle_click(row as u8, col as u8);
+        }
+    }
+
+    pub fn set_tile_size(&mut self, size: u16) {
+        self.tile_size = size;
+    }
+
+    pub fn _sdl_render(&mut self, canvas: &mut Canvas<Window>) {
+        self._sdl_draw_chessboard(canvas);
+        self._sdl_draw_highlights(canvas);
+        self._sdl_draw_pieces(canvas);
+    }
+
+    fn _sdl_draw_chessboard(&self, canvas: &mut Canvas<Window>) {
         let size = canvas.output_size().unwrap();
         let tile_size = size.0.min(size.1) / SIZE as u32;
         for (row, tile_row) in self.board.board.iter().enumerate() {
@@ -39,7 +134,7 @@ impl ChessGame {
                 canvas.set_draw_color(color);
 
                 canvas
-                    .fill_rect(Rect::new(
+                    .fill_rect(SDLRect::new(
                         col as i32 * tile_size as i32,
                         row as i32 * tile_size as i32,
                         tile_size,
@@ -50,7 +145,7 @@ impl ChessGame {
         }
     }
 
-    fn draw_highlights(&mut self, canvas: &mut Canvas<Window>) {
+    fn _sdl_draw_highlights(&mut self, canvas: &mut Canvas<Window>) {
         let size = canvas.output_size().unwrap();
         let tile_size = size.0.min(size.1) / SIZE as u32;
 
@@ -65,7 +160,7 @@ impl ChessGame {
                 };
                 canvas.set_draw_color(color);
                 canvas
-                    .fill_rect(Rect::new(
+                    .fill_rect(SDLRect::new(
                         col as i32 * tile_size as i32,
                         row as i32 * tile_size as i32,
                         tile_size,
@@ -82,7 +177,7 @@ impl ChessGame {
             canvas.set_draw_color(color);
             let (row, col) = (7 - active_tile.row, active_tile.col);
             canvas
-                .fill_rect(Rect::new(
+                .fill_rect(SDLRect::new(
                     col as i32 * tile_size as i32,
                     row as i32 * tile_size as i32,
                     tile_size,
@@ -96,7 +191,7 @@ impl ChessGame {
                 if self.board.at(pos).is_some() {
                     for i in 0..5 {
                         canvas
-                            .draw_rect(Rect::new(
+                            .draw_rect(SDLRect::new(
                                 col as i32 * tile_size as i32 + i,
                                 row as i32 * tile_size as i32 + i,
                                 tile_size - i as u32 * 2,
@@ -107,7 +202,7 @@ impl ChessGame {
                 // Highlight other tiles
                 } else {
                     canvas
-                        .fill_rect(Rect::new(
+                        .fill_rect(SDLRect::new(
                             col as i32 * tile_size as i32 + margin,
                             row as i32 * tile_size as i32 + margin,
                             tile_size - margin as u32 * 2,
@@ -119,7 +214,7 @@ impl ChessGame {
         }
     }
 
-    fn draw_pieces(&self, canvas: &mut Canvas<Window>) {
+    fn _sdl_draw_pieces(&self, canvas: &mut Canvas<Window>) {
         let size = canvas.output_size().unwrap();
         let tile_size = size.0.min(size.1) / SIZE as u32;
         let margin = 20;
@@ -133,7 +228,7 @@ impl ChessGame {
                     };
                     canvas.set_draw_color(color);
                     canvas
-                        .fill_rect(Rect::new(
+                        .fill_rect(SDLRect::new(
                             col as i32 * tile_size as i32 + margin,
                             row as i32 * tile_size as i32 + margin,
                             tile_size - margin as u32 * 2,
@@ -146,6 +241,10 @@ impl ChessGame {
     }
 
     pub fn make_bot_move(&mut self) {
+        if !self.bots_active {
+            return;
+        }
+
         if let Player::Bot(strat) = self.board.current_player() {
             if let Some((from, to)) = strat.choose_move(&mut self.board) {
                 self.board
@@ -179,7 +278,7 @@ impl ChessGame {
         }
     }
 
-    pub fn handle_keypress(&mut self, keycode: Keycode) {
+    pub fn _sdl_handle_keypress(&mut self, keycode: Keycode) {
         match keycode {
             Keycode::U => {
                 self.active_tile = None;
@@ -189,6 +288,9 @@ impl ChessGame {
             Keycode::R => {
                 self.board = Chessboard::default();
                 self.active_tile = None;
+            }
+            Keycode::B => {
+                self.bots_active = !self.bots_active;
             }
             _ => {}
         }
