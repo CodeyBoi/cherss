@@ -82,11 +82,6 @@ impl Widget for Piece {
         Self: Sized,
     {
         let (x, y) = (area.x + area.width / 2, area.y + area.height / 2);
-        buf.set_string(
-            x,
-            y,
-            self.to_fen().to_string(),
-            Style::new().white().on_black(),
-        );
+        buf.set_string(x, y, self.to_fen().to_string(), Style::new());
     }
 }

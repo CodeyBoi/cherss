@@ -3,6 +3,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ratatui::{prelude::*, widgets::*};
+
 use crossterm::{
     cursor,
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEvent, KeyEventKind},
@@ -12,12 +14,68 @@ use crossterm::{
         LeaveAlternateScreen,
     },
 };
-use ratatui::{backend::CrosstermBackend, layout::Rect, style::Stylize, widgets::Block, Terminal};
+use ratatui::{backend::CrosstermBackend, layout::Rect, style::Stylize, Terminal};
 
-use crate::chessboard::{self, SIZE};
 use crate::chessgame::ChessGame;
+use crate::{
+    chessboard::{self, SIZE},
+    piece::{ChessColor, Piece},
+};
 
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
+
+pub enum TileStatus {
+    Default,
+    Active,
+    CanMoveTo,
+    CanCaptureAt,
+}
+
+pub(crate) struct Tile {
+    pub piece: Option<Piece>,
+    pub status: TileStatus,
+    pub color: ChessColor,
+}
+
+impl Widget for &Tile {
+    fn render(self, area: Rect, buf: &mut Buffer)
+    where
+        Self: Sized,
+    {
+        use TileStatus as T;
+
+        (if let ChessColor::White = self.color {
+            Block::new().black().on_gray()
+        } else {
+            Block::new().white().on_dark_gray()
+        })
+        .render(area, buf);
+
+        match self.status {
+            T::Active => {
+                Block::new().on_green().render(area, buf);
+            }
+            T::CanMoveTo => {
+                let radius = 2;
+                let a = Rect {
+                    x: area.x + area.width / 2 - radius,
+                    y: area.y + (area.height - radius) / 2,
+                    width: radius * 2,
+                    height: radius,
+                };
+                Block::new().on_green().render(a, buf);
+            }
+            T::CanCaptureAt => {
+                Block::bordered().green().render(area, buf);
+            }
+            _ => {}
+        }
+
+        if let Some(piece) = self.piece {
+            piece.render(area, buf);
+        }
+    }
+}
 
 pub struct App {
     tui: Tui,
@@ -26,21 +84,29 @@ pub struct App {
 
 impl App {
     pub fn run(chess: ChessGame) -> io::Result<()> {
-        let tui = init_terminal()?;
+        let tui = Terminal::new(CrosstermBackend::new(stdout()))?;
+
         let mut app = App { tui, chess };
 
         let term_size = app.tui.size()?;
         let tile_size = 10;
         app.chess.set_tile_size(tile_size);
-        // let size = Rect {
-        //     x: 0,
-        //     y: 0,
-        //     width: tile_size * SIZE as u16,
-        //     height: tile_size * SIZE as u16 / 2,
-        // };
-        // app.tui
-        //     .resize(size)
-        //     .expect("couldn't resize terminal buffer");
+        let size = Rect {
+            x: 0,
+            y: 0,
+            width: tile_size * SIZE as u16,
+            height: tile_size * SIZE as u16 / 2,
+        };
+
+        if term_size.width < size.width || term_size.height < size.height {
+            println!(
+                "Please set terminal size to atleast {}x{}.",
+                size.width, size.height
+            );
+            return Ok(());
+        }
+
+        init_terminal()?;
 
         loop {
             let start = Instant::now();
@@ -52,7 +118,6 @@ impl App {
             app.chess.make_bot_move();
 
             app.tui.draw(|frame| {
-                frame.render_widget(Block::bordered().white().on_magenta(), frame.size());
                 app.chess.render(frame);
                 frame.set_cursor(0, 0);
             })?;
@@ -88,7 +153,7 @@ impl App {
     }
 }
 
-fn init_terminal() -> io::Result<Tui> {
+fn init_terminal() -> io::Result<()> {
     execute!(
         stdout(),
         EnterAlternateScreen,
@@ -96,19 +161,20 @@ fn init_terminal() -> io::Result<Tui> {
         cursor::Hide,
     )?;
     enable_raw_mode()?;
-    let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
 
-    Ok(terminal)
+    Ok(())
 }
 
 fn restore() -> io::Result<()> {
-    execute!(
-        stdout(),
-        LeaveAlternateScreen,
-        DisableMouseCapture,
-        cursor::Show,
-    )?;
-    disable_raw_mode()?;
+    if is_raw_mode_enabled()? {
+        execute!(
+            stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            cursor::Show,
+        )?;
+        disable_raw_mode()?;
+    }
 
     Ok(())
 }

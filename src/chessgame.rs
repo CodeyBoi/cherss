@@ -1,9 +1,11 @@
-use crate::{chessboard, piece::Piece, player::Player, tui::Tui};
+use crate::{
+    chessboard,
+    player::Player,
+    tui::{Tile, TileStatus},
+};
 use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    style::Stylize,
-    widgets::Block,
     Frame,
 };
 use sdl2::{
@@ -14,19 +16,6 @@ use crate::{
     chessboard::{Chessboard, Position, SIZE},
     piece::ChessColor,
 };
-
-enum TileStatus {
-    Default,
-    Active,
-    CanMoveTo,
-    CanCaptureAt,
-}
-
-struct Tile {
-    piece: Piece,
-    status: TileStatus,
-    color: Color,
-}
 
 pub struct ChessGame {
     board: Chessboard,
@@ -50,24 +39,54 @@ impl ChessGame {
     pub fn render(&mut self, frame: &mut Frame) {
         let app_area = frame.size();
         let board_area = Rect {
-            height: self.tile_size * SIZE as u16,
+            height: self.tile_size * SIZE as u16 / 2,
             width: self.tile_size * SIZE as u16,
             ..app_area
         };
         let binding =
             Layout::vertical([Constraint::Length(self.tile_size / 2); SIZE]).split(board_area);
         let rows = binding.iter().rev();
-        let tiles = rows.flat_map(|row| {
-            Layout::horizontal([Constraint::Length(self.tile_size); SIZE])
-                .split(*row)
-                .to_vec()
-        });
-        for (i, tile_area) in tiles.enumerate() {
-            let pos = Position::new((i / SIZE) as i8, (i % SIZE) as i8);
-            frame.render_widget(Block::bordered().gray().on_black(), tile_area);
-            if let Some(piece) = self.board.at(pos) {
-                frame.render_widget(piece, tile_area);
+        let tiles = rows
+            .flat_map(|row| {
+                Layout::horizontal([Constraint::Length(self.tile_size); SIZE])
+                    .split(*row)
+                    .to_vec()
+            })
+            .collect::<Vec<_>>();
+
+        let mut is_movable = [false; SIZE * SIZE];
+        if let Some(active_tile) = self.active_tile {
+            for pos in self.board.moves(active_tile) {
+                let idx = (pos.row * SIZE as i8 + pos.col) as usize;
+                is_movable[idx] = true;
             }
+        }
+
+        for (i, tile_area) in tiles.iter().enumerate() {
+            let pos = Position::new((i / SIZE) as i8, (i % SIZE) as i8);
+            let piece = self.board.at(pos);
+            let status = if is_movable[i] {
+                if self.board.at(pos).is_some() {
+                    TileStatus::CanCaptureAt
+                } else {
+                    TileStatus::CanMoveTo
+                }
+            } else if Some(pos) == self.active_tile {
+                TileStatus::Active
+            } else {
+                TileStatus::Default
+            };
+            let color = if (i + pos.row as usize) % 2 == 0 {
+                ChessColor::Black
+            } else {
+                ChessColor::White
+            };
+            let tile = Tile {
+                piece,
+                status,
+                color,
+            };
+            frame.render_widget(&tile, *tile_area);
         }
     }
 
