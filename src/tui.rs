@@ -5,26 +5,17 @@ use std::{
 
 use crossterm::{
     cursor,
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind,
-        MouseButton, MouseEvent, MouseEventKind,
-    },
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEvent, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    ExecutableCommand,
+    terminal::{
+        disable_raw_mode, enable_raw_mode, is_raw_mode_enabled, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::Rect,
-    style::Stylize,
-    widgets::{canvas::Rectangle, Block},
-    Terminal,
-};
+use ratatui::{backend::CrosstermBackend, layout::Rect, style::Stylize, widgets::Block, Terminal};
 
-use crate::{
-    chessboard::{self, SIZE},
-    chessgame::ChessGame,
-};
+use crate::chessboard::{self, SIZE};
+use crate::chessgame::ChessGame;
 
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 
@@ -41,6 +32,15 @@ impl App {
         let term_size = app.tui.size()?;
         let tile_size = 10;
         app.chess.set_tile_size(tile_size);
+        // let size = Rect {
+        //     x: 0,
+        //     y: 0,
+        //     width: tile_size * SIZE as u16,
+        //     height: tile_size * SIZE as u16 / 2,
+        // };
+        // app.tui
+        //     .resize(size)
+        //     .expect("couldn't resize terminal buffer");
 
         loop {
             let start = Instant::now();
@@ -61,9 +61,6 @@ impl App {
                 Duration::from_micros(1_000_000 / 10).saturating_sub(start.elapsed()),
             );
         }
-
-        app.tui.resize(term_size)?;
-        restore()?;
         Ok(())
     }
 
@@ -114,4 +111,10 @@ fn restore() -> io::Result<()> {
     disable_raw_mode()?;
 
     Ok(())
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        restore().expect("restore function should not fail");
+    }
 }

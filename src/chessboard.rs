@@ -24,7 +24,7 @@ pub struct ChessMove {
 }
 
 impl Position {
-    pub fn new(row: i8, col: i8) -> Self {
+    pub const fn new(row: i8, col: i8) -> Self {
         Self { row, col }
     }
 
@@ -67,33 +67,26 @@ pub enum CastlingSide {
 }
 
 #[derive(Clone, Copy)]
-pub struct CastlingRight {
-    side: CastlingSide,
-    color: ChessColor,
+pub struct CastlingRights {
+    queen_side: bool,
+    king_side: bool,
 }
 
-impl CastlingRight {
-    const STANDARD: [Self; 4] = [
+impl CastlingRights {
+    pub fn new() -> Self {
         Self {
-            side: CastlingSide::KingSide,
-            color: ChessColor::White,
-        },
-        Self {
-            side: CastlingSide::QueenSide,
-            color: ChessColor::White,
-        },
-        Self {
-            side: CastlingSide::KingSide,
-            color: ChessColor::Black,
-        },
-        Self {
-            side: CastlingSide::QueenSide,
-            color: ChessColor::Black,
-        },
-    ];
+            queen_side: false,
+            king_side: false,
+        }
+    }
+}
 
-    pub fn new(color: ChessColor, side: CastlingSide) -> Self {
-        Self { color, side }
+impl Default for CastlingRights {
+    fn default() -> Self {
+        Self {
+            queen_side: true,
+            king_side: true,
+        }
     }
 }
 
@@ -108,7 +101,8 @@ pub struct Chessboard {
     pub board: [[Option<Piece>; SIZE]; SIZE],
     pub history: Vec<ChessMove>,
     first_turn_color: ChessColor,
-    castling_rights: Vec<CastlingRight>,
+    white_initial_castling_rights: CastlingRights,
+    black_initial_castling_rights: CastlingRights,
     en_passant_target: Option<Position>,
     start_turn_number: u32,
     white_king: Position,
@@ -125,7 +119,8 @@ impl Chessboard {
             board: [[None; SIZE]; SIZE],
             history: Vec::new(),
             first_turn_color: ChessColor::White,
-            castling_rights: CastlingRight::STANDARD.to_vec(),
+            white_initial_castling_rights: CastlingRights::default(),
+            black_initial_castling_rights: CastlingRights::default(),
             en_passant_target: None,
             start_turn_number: 0,
             white_king: Position::new(0, 0),
@@ -187,30 +182,14 @@ impl Chessboard {
             None => return Err(ParseFENError::IncompleteString),
         };
 
-        self.castling_rights = input
-            .next()
-            .unwrap()
-            .chars()
-            .filter_map(|c| match c {
-                'K' => Some(CastlingRight::new(
-                    ChessColor::White,
-                    CastlingSide::KingSide,
-                )),
-                'Q' => Some(CastlingRight::new(
-                    ChessColor::White,
-                    CastlingSide::QueenSide,
-                )),
-                'k' => Some(CastlingRight::new(
-                    ChessColor::Black,
-                    CastlingSide::KingSide,
-                )),
-                'q' => Some(CastlingRight::new(
-                    ChessColor::Black,
-                    CastlingSide::QueenSide,
-                )),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        (
+            self.white_initial_castling_rights,
+            self.black_initial_castling_rights,
+        ) = {
+            let mut castling_rights = (CastlingRights::new(), CastlingRights::new());
+            for c in input.next().unwrap().chars() {}
+            castling_rights
+        };
 
         self.en_passant_target = Position::from_str(input.next().unwrap()).ok();
 
@@ -259,20 +238,22 @@ impl Chessboard {
         });
         fen.push(' ');
 
-        let castling_string = self
-            .castling_rights
-            .iter()
-            .map(|cr| {
-                let c = match cr.side {
-                    CastlingSide::KingSide => 'K',
-                    CastlingSide::QueenSide => 'Q',
-                };
-                match cr.color {
-                    ChessColor::White => c,
-                    ChessColor::Black => c.to_ascii_lowercase(),
-                }
-            })
-            .collect::<String>();
+        let castling_string = {
+            let mut s = String::new();
+            if self.white_initial_castling_rights.king_side {
+                s.push('K');
+            }
+            if self.white_initial_castling_rights.queen_side {
+                s.push('Q');
+            }
+            if self.black_initial_castling_rights.king_side {
+                s.push('k');
+            }
+            if self.black_initial_castling_rights.queen_side {
+                s.push('q');
+            }
+            s
+        };
         if castling_string.is_empty() {
             fen.push('-');
         } else {
@@ -518,6 +499,36 @@ impl Chessboard {
         };
     }
 
+    fn castling_rights(&self) -> (CastlingRights, CastlingRights) {
+        const WHITE_KING_START: Position = Position::new(0, 4);
+        const WHITE_LROOK_START: Position = Position::new(0, 0);
+        const WHITE_RROOK_START: Position = Position::new(0, 7);
+        const BLACK_KING_START: Position = Position::new(7, 4);
+        const BLACK_LROOK_START: Position = Position::new(7, 0);
+        const BLACK_RROOK_START: Position = Position::new(7, 7);
+
+        let mut crs = (
+            self.white_initial_castling_rights,
+            self.black_initial_castling_rights,
+        );
+        for ChessMove { from, to, .. } in self.history.iter() {
+            if *from == WHITE_KING_START {
+                crs.0 = CastlingRights::new();
+            } else if *from == WHITE_LROOK_START || *to == WHITE_LROOK_START {
+                crs.0.queen_side = false;
+            } else if *from == WHITE_RROOK_START || *to == WHITE_RROOK_START {
+                crs.0.king_side = false;
+            } else if *from == BLACK_KING_START {
+                crs.1 = CastlingRights::new();
+            } else if *from == BLACK_LROOK_START || *to == BLACK_LROOK_START {
+                crs.1.queen_side = false;
+            } else if *from == BLACK_RROOK_START || *to == BLACK_RROOK_START {
+                crs.1.king_side = false;
+            }
+        }
+        crs
+    }
+
     pub fn at(&self, pos: Position) -> Option<Piece> {
         if pos.in_bounds() {
             self.board[pos.row as usize][pos.col as usize]
@@ -526,12 +537,7 @@ impl Chessboard {
         }
     }
 
-    fn is_king_in_check(&mut self, color: ChessColor) -> bool {
-        let pos = match color {
-            ChessColor::White => self.white_king,
-            ChessColor::Black => self.black_king,
-        };
-
+    fn is_attacked(&self, pos: Position, color: ChessColor) -> bool {
         if self
             .rook_moves(color, pos)
             .iter()
@@ -594,6 +600,14 @@ impl Chessboard {
         }
 
         false
+    }
+
+    fn is_king_in_check(&self, color: ChessColor) -> bool {
+        let pos = match color {
+            ChessColor::White => self.white_king,
+            ChessColor::Black => self.black_king,
+        };
+        self.is_attacked(pos, color)
     }
 
     fn try_move(&mut self, from: Position, to: Position) -> bool {
@@ -703,9 +717,7 @@ impl Chessboard {
     }
 
     fn king_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
-        // TODO: Add castling
-
-        self.moves_with_offsets(
+        let mut moves = self.moves_with_offsets(
             color,
             pos,
             vec![
@@ -718,7 +730,33 @@ impl Chessboard {
                 (-1, 1),
                 (-1, -1),
             ],
-        )
+        );
+
+        // Check if castling is possible
+        let color = self.current_turn_color();
+        let castling_rights = match color {
+            ChessColor::White => self.castling_rights().0,
+            ChessColor::Black => self.castling_rights().1,
+        };
+        if castling_rights.queen_side
+            && (1..=3).all(|i| {
+                let new_pos = Position::new(pos.row, pos.col - i);
+                self.at(new_pos).is_none() && (!self.is_attacked(new_pos, color) || i == 3)
+            })
+        {
+            moves.push(Position::new(pos.row, pos.col - 2));
+        }
+
+        if castling_rights.king_side
+            && (1..=2).all(|i| {
+                let new_pos = Position::new(pos.row, pos.col + i);
+                self.at(new_pos).is_none() && !self.is_attacked(new_pos, color)
+            })
+        {
+            moves.push(Position::new(pos.row, pos.col + 2));
+        }
+
+        moves
     }
 
     fn moves_with_directions(

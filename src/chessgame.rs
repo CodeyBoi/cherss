@@ -261,6 +261,16 @@ impl ChessGame {
         if let Some(last_interact) = self.active_tile {
             // If move is successful, reset active tile
             if let Ok(()) = self.board.make_move(last_interact, pos) {
+                if let Player::Bot(strat) = self.board.current_player() {
+                    if let Some((from, to)) = strat.choose_move(&mut self.board) {
+                        if let Err(e) = self.board.make_move(from, to) {
+                            println!(
+                                "error: bot tried making illegal move {}->{}: {:?}",
+                                from, to, e,
+                            );
+                        }
+                    }
+                }
                 self.active_tile = None;
                 return;
             }
