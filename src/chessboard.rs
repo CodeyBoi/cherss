@@ -186,9 +186,17 @@ impl Chessboard {
             self.white_initial_castling_rights,
             self.black_initial_castling_rights,
         ) = {
-            let mut castling_rights = (CastlingRights::new(), CastlingRights::new());
-            for c in input.next().unwrap().chars() {}
-            castling_rights
+            let mut crs = (CastlingRights::new(), CastlingRights::new());
+            for c in input.next().unwrap().chars() {
+                match c {
+                    'Q' => crs.0.queen_side = true,
+                    'K' => crs.0.king_side = true,
+                    'q' => crs.1.queen_side = true,
+                    'k' => crs.1.king_side = true,
+                    _ => {}
+                }
+            }
+            crs
         };
 
         self.en_passant_target = Position::from_str(input.next().unwrap()).ok();
@@ -697,22 +705,24 @@ impl Chessboard {
     ];
 
     fn knight_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
-        self.moves_with_offsets(color, pos, Self::KNIGHT_MOVES.to_vec())
+        self.moves_with_offsets(color, pos, Self::KNIGHT_MOVES.as_slice())
     }
 
     fn bishop_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
-        self.moves_with_directions(color, pos, Self::DIAGONAL_DIRECTIONS.to_vec())
+        self.moves_with_directions(color, pos, Self::DIAGONAL_DIRECTIONS.as_slice())
     }
 
     fn rook_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
-        self.moves_with_directions(color, pos, Self::CARDINAL_DIRECTIONS.to_vec())
+        self.moves_with_directions(color, pos, Self::CARDINAL_DIRECTIONS.as_slice())
     }
 
     fn queen_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
         self.moves_with_directions(
             color,
             pos,
-            [Self::CARDINAL_DIRECTIONS, Self::DIAGONAL_DIRECTIONS].concat(),
+            [Self::CARDINAL_DIRECTIONS, Self::DIAGONAL_DIRECTIONS]
+                .concat()
+                .as_slice(),
         )
     }
 
@@ -720,7 +730,7 @@ impl Chessboard {
         let mut moves = self.moves_with_offsets(
             color,
             pos,
-            vec![
+            [
                 (0, 1),
                 (1, 0),
                 (0, -1),
@@ -729,7 +739,8 @@ impl Chessboard {
                 (1, -1),
                 (-1, 1),
                 (-1, -1),
-            ],
+            ]
+            .as_slice(),
         );
 
         // Check if castling is possible
@@ -763,7 +774,7 @@ impl Chessboard {
         &self,
         color: ChessColor,
         pos: Position,
-        directions: Vec<(i8, i8)>,
+        directions: &[(i8, i8)],
     ) -> Vec<Position> {
         let mut moves = Vec::new();
         for (d_row, d_col) in directions {
@@ -794,7 +805,7 @@ impl Chessboard {
         &self,
         color: ChessColor,
         pos: Position,
-        offsets: Vec<(i8, i8)>,
+        offsets: &[(i8, i8)],
     ) -> Vec<Position> {
         let mut moves = Vec::new();
         for (d_row, d_col) in offsets {

@@ -56,7 +56,7 @@ impl Widget for &Tile {
                 Block::new().on_green().render(area, buf);
             }
             T::CanMoveTo => {
-                let radius = 2;
+                let radius = 1;
                 let a = Rect {
                     x: area.x + area.width / 2 - radius,
                     y: area.y + (area.height - radius) / 2,
@@ -154,13 +154,13 @@ impl App {
 }
 
 fn init_terminal() -> io::Result<()> {
+    enable_raw_mode()?;
     execute!(
         stdout(),
         EnterAlternateScreen,
         EnableMouseCapture,
         cursor::Hide,
     )?;
-    enable_raw_mode()?;
 
     Ok(())
 }
