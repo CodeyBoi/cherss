@@ -155,24 +155,16 @@ impl App {
 
 fn init_terminal() -> io::Result<()> {
     enable_raw_mode()?;
-    execute!(
-        stdout(),
-        EnterAlternateScreen,
-        EnableMouseCapture,
-        cursor::Hide,
-    )?;
+    execute!(stdout(), EnterAlternateScreen)?;
+    execute!(stdout(), EnableMouseCapture, cursor::Hide)?;
 
     Ok(())
 }
 
 fn restore() -> io::Result<()> {
     if is_raw_mode_enabled()? {
-        execute!(
-            stdout(),
-            LeaveAlternateScreen,
-            DisableMouseCapture,
-            cursor::Show,
-        )?;
+        execute!(stdout(), DisableMouseCapture, cursor::Show)?;
+        execute!(stdout(), LeaveAlternateScreen)?;
         disable_raw_mode()?;
     }
 

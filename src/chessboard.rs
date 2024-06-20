@@ -597,7 +597,13 @@ impl Chessboard {
         }
 
         if self
-            .king_moves(color, pos)
+            .moves_with_offsets(
+                color,
+                pos,
+                [Self::DIAGONAL_DIRECTIONS, Self::CARDINAL_DIRECTIONS]
+                    .concat()
+                    .as_slice(),
+            )
             .iter()
             .any(|m| match self.at(*m) {
                 Some(piece) => piece.color != color && piece.piece == PieceType::King,
@@ -693,7 +699,7 @@ impl Chessboard {
 
     const DIAGONAL_DIRECTIONS: [(i8, i8); 4] = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
     const CARDINAL_DIRECTIONS: [(i8, i8); 4] = [(0, 1), (1, 0), (0, -1), (-1, 0)];
-    const KNIGHT_MOVES: [(i8, i8); 8] = [
+    const KNIGHT_OFFSETS: [(i8, i8); 8] = [
         (-1, -2),
         (1, -2),
         (-2, -1),
@@ -705,7 +711,7 @@ impl Chessboard {
     ];
 
     fn knight_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
-        self.moves_with_offsets(color, pos, Self::KNIGHT_MOVES.as_slice())
+        self.moves_with_offsets(color, pos, Self::KNIGHT_OFFSETS.as_slice())
     }
 
     fn bishop_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
@@ -730,17 +736,9 @@ impl Chessboard {
         let mut moves = self.moves_with_offsets(
             color,
             pos,
-            [
-                (0, 1),
-                (1, 0),
-                (0, -1),
-                (-1, 0),
-                (1, 1),
-                (1, -1),
-                (-1, 1),
-                (-1, -1),
-            ]
-            .as_slice(),
+            [Self::CARDINAL_DIRECTIONS, Self::DIAGONAL_DIRECTIONS]
+                .concat()
+                .as_slice(),
         );
 
         // Check if castling is possible
