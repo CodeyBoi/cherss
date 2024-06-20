@@ -574,8 +574,12 @@ impl Chessboard {
             return true;
         }
 
+        let pawn_offsets = match color {
+            ChessColor::White => [(-1, 1), (1, 1)],
+            ChessColor::Black => [(-1, -1), (1, -1)],
+        };
         if self
-            .pawn_moves(color, pos)
+            .moves_with_offsets(color, pos, pawn_offsets.as_slice())
             .iter()
             .any(|m| match self.at(*m) {
                 Some(piece) => piece.color != color && piece.piece == PieceType::Pawn,
