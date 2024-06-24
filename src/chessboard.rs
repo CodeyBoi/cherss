@@ -2,6 +2,7 @@ use core::panic;
 use std::{fmt::Display, str::FromStr};
 
 use crate::{
+    chess::ChessMoveError,
     chessgame::ChessGame,
     piece::{ChessColor, Piece, PieceType},
     player::{BotStrategy, Player},
@@ -16,7 +17,7 @@ pub struct Position {
 }
 
 #[derive(Debug)]
-pub struct ChessMove {
+pub struct ChessHistoryEntry {
     pub from: Position,
     pub to: Position,
     pub captured_piece: Option<Piece>,
@@ -43,15 +44,6 @@ impl Display for Position {
         s.push((self.row as u8 + b'1') as char);
         f.write_str(&s)
     }
-}
-
-#[derive(Debug)]
-pub enum ChessMoveError {
-    OutOfBounds,
-    MissingPiece,
-    SameColorCapture,
-    IllegalMove,
-    GameHasEnded,
 }
 
 #[derive(Debug)]
@@ -99,7 +91,7 @@ pub enum ChessResult {
 
 pub struct Chessboard {
     pub board: [[Option<Piece>; SIZE]; SIZE],
-    pub history: Vec<ChessMove>,
+    pub history: Vec<ChessHistoryEntry>,
     first_turn_color: ChessColor,
     white_initial_castling_rights: CastlingRights,
     black_initial_castling_rights: CastlingRights,
@@ -299,7 +291,7 @@ impl Chessboard {
         self.move_piece(from, to)?;
 
         // Reset halfmove clock if piece captured or pawn advanced
-        if let Some(ChessMove {
+        if let Some(ChessHistoryEntry {
             captured_piece: Some(_),
             ..
         }) = self.history.last()
@@ -386,7 +378,7 @@ impl Chessboard {
 
                 self.board[to.row as usize][to.col as usize] = Some(piece);
                 self.board[from.row as usize][from.col as usize] = None;
-                self.history.push(ChessMove {
+                self.history.push(ChessHistoryEntry {
                     from,
                     to,
                     captured_piece,
@@ -456,7 +448,7 @@ impl Chessboard {
     }
 
     pub fn undo(&mut self) {
-        let Some(ChessMove {
+        let Some(ChessHistoryEntry {
             from,
             to,
             captured_piece,
@@ -519,7 +511,7 @@ impl Chessboard {
             self.white_initial_castling_rights,
             self.black_initial_castling_rights,
         );
-        for ChessMove { from, to, .. } in self.history.iter() {
+        for ChessHistoryEntry { from, to, .. } in self.history.iter() {
             if *from == WHITE_KING_START {
                 crs.0 = CastlingRights::new();
             } else if *from == WHITE_LROOK_START || *to == WHITE_LROOK_START {
