@@ -1,6 +1,9 @@
 use rand::seq::SliceRandom as _;
 
-use crate::chessboard::{Chessboard, Position};
+use crate::{
+    chessboard::{Chessboard, Position},
+    piece::ChessColor,
+};
 
 #[derive(Clone, Copy)]
 pub enum Player {
@@ -27,13 +30,26 @@ impl BotStrategy {
         moves[..].choose(&mut rand::thread_rng()).cloned()
     }
 
-    pub fn dark_squares(board: &mut Chessboard) -> Option<(Position, Position)> {
+    fn dark_squares(board: &mut Chessboard) -> Option<(Position, Position)> {
         let moves = board.all_moves();
         moves
             .iter()
-            .find(|&&pos| (pos.1.row + pos.1.col) % 2 == 0 && (pos.0.row + pos.0.col) % 2 == 1)
-            .or_else(|| moves.iter().find(|&&pos| (pos.1.row + pos.1.col) % 2 == 0))
+            .find(|&&(from, to)| {
+                from.tile_color() == ChessColor::White && to.tile_color() == ChessColor::Black
+            })
+            .or_else(|| {
+                moves
+                    .iter()
+                    .find(|&&(_, to)| to.tile_color() == ChessColor::Black)
+            })
             .cloned()
             .or_else(|| Self::random(board))
+    }
+
+    fn mirror(board: &mut Chessboard) -> Option<(Position, Position)> {
+        let moves = board.all_moves();
+        if let Some(last_move) = board.history.last() {}
+
+        todo!()
     }
 }

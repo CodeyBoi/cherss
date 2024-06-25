@@ -1,12 +1,12 @@
 use crate::{
-    chessboard,
+    chessboard::ChessResult,
     player::Player,
     tui::{Tile, TileStatus},
 };
 use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
-    Frame,
+    widgets::Widget,
 };
 use sdl2::{
     keyboard::Keycode, pixels::Color, rect::Rect as SDLRect, render::Canvas, video::Window,
@@ -25,26 +25,12 @@ pub struct ChessGame {
     pub tile_size: u16,
 }
 
-impl ChessGame {
-    pub fn new(board: Chessboard) -> Self {
-        Self {
-            board,
-            active_tile: None,
-            bots_active: true,
-            is_running: true,
-            tile_size: 8,
-        }
-    }
-
-    pub fn render(&mut self, frame: &mut Frame) {
-        let app_area = frame.size();
-        let board_area = Rect {
-            height: self.tile_size * SIZE as u16 / 2,
-            width: self.tile_size * SIZE as u16,
-            ..app_area
-        };
-        let binding =
-            Layout::vertical([Constraint::Length(self.tile_size / 2); SIZE]).split(board_area);
+impl Widget for &mut ChessGame {
+    fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer)
+    where
+        Self: Sized,
+    {
+        let binding = Layout::vertical([Constraint::Length(self.tile_size / 2); SIZE]).split(area);
         let rows = binding.iter().rev();
         let tiles = rows
             .flat_map(|row| {
@@ -62,10 +48,10 @@ impl ChessGame {
             }
         }
 
-        for (i, tile_area) in tiles.iter().enumerate() {
+        for (i, (tile_area, &is_movable)) in tiles.iter().zip(is_movable.iter()).enumerate() {
             let pos = Position::new((i / SIZE) as i8, (i % SIZE) as i8);
             let piece = self.board.at(pos);
-            let status = if is_movable[i] {
+            let status = if is_movable {
                 if self.board.at(pos).is_some() {
                     TileStatus::CanCaptureAt
                 } else {
@@ -86,7 +72,19 @@ impl ChessGame {
                 status,
                 color,
             };
-            frame.render_widget(&tile, *tile_area);
+            tile.render(*tile_area, buf);
+        }
+    }
+}
+
+impl ChessGame {
+    pub fn new(board: Chessboard) -> Self {
+        Self {
+            board,
+            active_tile: None,
+            bots_active: false,
+            is_running: true,
+            tile_size: 10,
         }
     }
 
@@ -98,15 +96,20 @@ impl ChessGame {
             }
             K::Char('U' | 'u') => {
                 self.active_tile = None;
-                self.board.undo();
+                if let ChessResult::Undecided = self.board.result {
+                    self.board.undo();
+                }
                 self.board.undo();
             }
             K::Char('R' | 'r') => {
-                self.board = Chessboard::default();
+                self.board.board = Chessboard::default().board;
                 self.active_tile = None;
             }
             K::Char('B' | 'b') => {
                 self.bots_active = !self.bots_active;
+            }
+            K::Char('T' | 't') => {
+                self.make_bot_move();
             }
             _ => {}
         }
@@ -121,11 +124,14 @@ impl ChessGame {
         } = event
         {
             let (row, col) = (
-                chessboard::SIZE as u16 - 1 - (m_row * 2 / self.tile_size),
+                SIZE as u16 - 1 - (m_row * 2 / self.tile_size),
                 m_col / self.tile_size,
             );
-            print!("{row},{col}\r");
-            self.handle_click(row as u8, col as u8);
+            let (row, col) = (row as u8, col as u8);
+
+            if row < SIZE as u8 && col < SIZE as u8 {
+                self.handle_click(row, col);
+            }
         }
     }
 
@@ -260,10 +266,6 @@ impl ChessGame {
     }
 
     pub fn make_bot_move(&mut self) {
-        if !self.bots_active {
-            return;
-        }
-
         if let Player::Bot(strat) = self.board.current_player() {
             if let Some((from, to)) = strat.choose_move(&mut self.board) {
                 self.board

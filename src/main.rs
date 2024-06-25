@@ -2,6 +2,7 @@ use chessboard::Chessboard;
 use player::{BotStrategy, Player};
 use tui::App;
 
+mod bitboard;
 mod chess;
 mod chessboard;
 mod chessgame;

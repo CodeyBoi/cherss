@@ -1,11 +1,15 @@
 use core::panic;
-use std::{fmt::Display, str::FromStr};
+use std::{
+    fmt::Display,
+    ops::{Add, Sub},
+    str::FromStr,
+};
 
 use crate::{
     chess::ChessMoveError,
     chessgame::ChessGame,
     piece::{ChessColor, Piece, PieceType},
-    player::{BotStrategy, Player},
+    player::Player,
 };
 
 pub const SIZE: usize = 8;
@@ -17,11 +21,19 @@ pub struct Position {
 }
 
 #[derive(Debug)]
+pub enum MoveType {
+    Standard,
+    EnPassant { capture_pos: Position },
+    Castle,
+    Promotion,
+}
+
+#[derive(Debug)]
 pub struct ChessHistoryEntry {
     pub from: Position,
     pub to: Position,
     pub captured_piece: Option<Piece>,
-    pub en_passant_capture_pos: Option<Position>,
+    pub move_type: MoveType,
 }
 
 impl Position {
@@ -35,6 +47,14 @@ impl Position {
             && 0 <= self.col
             && self.col < SIZE.try_into().unwrap()
     }
+
+    pub fn tile_color(&self) -> ChessColor {
+        if (self.row + self.col) % 2 == 0 {
+            ChessColor::Black
+        } else {
+            ChessColor::White
+        }
+    }
 }
 
 impl Display for Position {
@@ -46,16 +66,26 @@ impl Display for Position {
     }
 }
 
+impl Add for Position {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Self::new(self.row + rhs.row, self.col + rhs.col)
+    }
+}
+
+impl Sub for Position {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self::new(self.row - rhs.row, self.col - rhs.col)
+    }
+}
+
 #[derive(Debug)]
 pub enum ParseFENError {
     IncompleteString,
     InvalidTurn,
-}
-
-#[derive(Clone, Copy)]
-pub enum CastlingSide {
-    KingSide,
-    QueenSide,
 }
 
 #[derive(Clone, Copy)]
@@ -102,7 +132,7 @@ pub struct Chessboard {
     black_king: Position,
     black_player: Player,
     halfmove_clock: u8,
-    result: ChessResult,
+    pub result: ChessResult,
 }
 
 impl Chessboard {
@@ -311,8 +341,8 @@ impl Chessboard {
         }
 
         // Check for checkmate
-        let current_turn = self.current_turn_color();
         if self.all_moves().is_empty() {
+            let current_turn = self.current_turn_color();
             if self.is_king_in_check(current_turn) {
                 self.result = ChessResult::Win(current_turn);
             } else {
@@ -376,13 +406,40 @@ impl Chessboard {
                         None
                     };
 
+                // Move piece
                 self.board[to.row as usize][to.col as usize] = Some(piece);
                 self.board[from.row as usize][from.col as usize] = None;
+
+                let move_type = if let Some(en_passant_pos) = en_passant_pos {
+                    MoveType::EnPassant {
+                        capture_pos: en_passant_pos,
+                    }
+                } else if piece.piece == PieceType::King && from.col.abs_diff(to.col) >= 2 {
+                    let row = from.row as usize;
+                    let (from_col, to_col) = if from.col < to.col {
+                        // Castle king side
+                        (SIZE - 1, SIZE - 3)
+                    } else {
+                        // Castle queen side
+                        (0, 3)
+                    };
+                    self.board[row][to_col] = self.at(Position::new(row as i8, from_col as i8));
+                    self.board[row][from_col] = None;
+                    MoveType::Castle
+                } else if piece.piece == PieceType::Pawn
+                    && ((piece.color == ChessColor::White && to.row == SIZE as i8 - 1)
+                        || (piece.color == ChessColor::Black && to.row == 0))
+                {
+                    MoveType::Promotion
+                } else {
+                    MoveType::Standard
+                };
+
                 self.history.push(ChessHistoryEntry {
                     from,
                     to,
                     captured_piece,
-                    en_passant_capture_pos: en_passant_pos,
+                    move_type,
                 });
 
                 Ok(())
@@ -452,17 +509,39 @@ impl Chessboard {
             from,
             to,
             captured_piece,
-            en_passant_capture_pos: en_passant_pos,
+            move_type,
         }) = self.history.pop()
         else {
             // No moves have been made, do nothing
             return;
         };
 
+        self.result = ChessResult::Undecided;
+
         self.board[from.row as usize][from.col as usize] = self.at(to);
         self.board[to.row as usize][to.col as usize] = None;
-        let return_pos = en_passant_pos.unwrap_or(to);
-        self.board[return_pos.row as usize][return_pos.col as usize] = captured_piece;
+
+        match move_type {
+            MoveType::EnPassant { capture_pos } => {
+                self.board[capture_pos.row as usize][capture_pos.col as usize] = captured_piece;
+            }
+            MoveType::Castle => {
+                let row = from.row as usize;
+                let (from_col, to_col) = if from.col < to.col {
+                    // Castle king side
+                    (SIZE - 1, SIZE - 3)
+                } else {
+                    // Castle queen side
+                    (0, 3)
+                };
+                self.board[row][from_col] = self.at(Position::new(row as i8, to_col as i8));
+                self.board[row][to_col] = None;
+            }
+            MoveType::Promotion => todo!(),
+            _ => {}
+        }
+
+        self.board[to.row as usize][to.col as usize] = captured_piece;
 
         if let Some(piece) = self.at(from) {
             // Update king position
@@ -567,8 +646,8 @@ impl Chessboard {
         }
 
         let pawn_offsets = match color {
-            ChessColor::White => [(-1, 1), (1, 1)],
-            ChessColor::Black => [(-1, -1), (1, -1)],
+            ChessColor::White => [(1, -1), (1, 1)],
+            ChessColor::Black => [(-1, -1), (-1, 1)],
         };
         if self
             .moves_with_offsets(color, pos, pawn_offsets.as_slice())
@@ -623,11 +702,10 @@ impl Chessboard {
     fn try_move(&mut self, from: Position, to: Position) -> bool {
         let current_turn = self.current_turn_color();
 
-        match self.move_piece(from, to) {
-            Ok(_) => {}
+        if self.move_piece(from, to).is_err() {
             // This means the move is invalid
-            Err(_) => return false,
-        };
+            return false;
+        }
         let ret = !self.is_king_in_check(current_turn);
         self.undo();
         ret

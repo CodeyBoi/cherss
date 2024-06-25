@@ -3,7 +3,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ratatui::{prelude::*, widgets::*};
+use ratatui::{layout::Position, prelude::*, widgets::*};
 
 use crossterm::{
     cursor,
@@ -18,12 +18,13 @@ use ratatui::{backend::CrosstermBackend, layout::Rect, style::Stylize, Terminal}
 
 use crate::chessgame::ChessGame;
 use crate::{
-    chessboard::{self, SIZE},
+    chessboard::SIZE,
     piece::{ChessColor, Piece},
 };
 
 pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 
+#[derive(Clone, Copy)]
 pub enum TileStatus {
     Default,
     Active,
@@ -37,6 +38,25 @@ pub(crate) struct Tile {
     pub color: ChessColor,
 }
 
+struct TileColors {
+    bg: Color,
+    active: Color,
+    highlight: Color,
+}
+
+impl TileColors {
+    const LIGHT: TileColors = TileColors {
+        bg: Color::Rgb(240, 217, 181),
+        active: Color::Rgb(205, 209, 107),
+        highlight: Color::Rgb(130, 151, 105),
+    };
+    const DARK: TileColors = TileColors {
+        bg: Color::Rgb(181, 136, 99),
+        active: Color::Rgb(170, 162, 59),
+        highlight: Color::Rgb(100, 111, 64),
+    };
+}
+
 impl Widget for &Tile {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
@@ -44,17 +64,18 @@ impl Widget for &Tile {
     {
         use TileStatus as T;
 
-        (if let ChessColor::White = self.color {
-            Block::new().black().on_gray()
-        } else {
-            Block::new().white().on_dark_gray()
-        })
-        .render(area, buf);
+        let colors = match self.color {
+            ChessColor::White => TileColors::LIGHT,
+            ChessColor::Black => TileColors::DARK,
+        };
+        Block::new()
+            .bg(match self.status {
+                T::Active => colors.active,
+                _ => colors.bg,
+            })
+            .render(area, buf);
 
         match self.status {
-            T::Active => {
-                Block::new().on_green().render(area, buf);
-            }
             T::CanMoveTo => {
                 let radius = 1;
                 let a = Rect {
@@ -63,16 +84,16 @@ impl Widget for &Tile {
                     width: radius * 2,
                     height: radius,
                 };
-                Block::new().on_green().render(a, buf);
+                Block::new().bg(colors.highlight).render(a, buf);
             }
             T::CanCaptureAt => {
-                Block::bordered().green().render(area, buf);
+                Block::bordered().fg(colors.highlight).render(area, buf);
             }
             _ => {}
         }
 
         if let Some(piece) = self.piece {
-            piece.render(area, buf);
+            piece.render(area.inner(&Margin::new(1, 1)), buf);
         }
     }
 }
@@ -80,31 +101,38 @@ impl Widget for &Tile {
 pub struct App {
     tui: Tui,
     chess: ChessGame,
+    render_area: Rect,
 }
 
 impl App {
-    pub fn run(chess: ChessGame) -> io::Result<()> {
+    pub fn run(mut chess: ChessGame) -> io::Result<()> {
         let tui = Terminal::new(CrosstermBackend::new(stdout()))?;
 
-        let mut app = App { tui, chess };
-
-        let term_size = app.tui.size()?;
+        let app_area = tui.size()?;
         let tile_size = 10;
-        app.chess.set_tile_size(tile_size);
-        let size = Rect {
-            x: 0,
-            y: 0,
-            width: tile_size * SIZE as u16,
-            height: tile_size * SIZE as u16 / 2,
-        };
+        chess.set_tile_size(tile_size);
+        let (width, height) = (tile_size * SIZE as u16, tile_size * SIZE as u16 / 2);
 
-        if term_size.width < size.width || term_size.height < size.height {
+        if app_area.width < width || app_area.height < height {
             println!(
-                "Please set terminal size to atleast {}x{}.",
-                size.width, size.height
+                "Please set terminal size to atleast {}x{} (current term size {}x{})",
+                width, height, app_area.width, app_area.height
             );
             return Ok(());
         }
+
+        let render_area = Rect {
+            x: app_area.x + (app_area.width - width) / 2,
+            y: app_area.y + (app_area.height - height) / 2,
+            width,
+            height,
+        };
+
+        let mut app = App {
+            tui,
+            chess,
+            render_area,
+        };
 
         init_terminal()?;
 
@@ -115,15 +143,14 @@ impl App {
             }
 
             app.handle_events().expect("error when handling events");
-            app.chess.make_bot_move();
+            if app.chess.bots_active {
+                app.chess.make_bot_move();
+            }
 
-            app.tui.draw(|frame| {
-                app.chess.render(frame);
-                frame.set_cursor(0, 0);
-            })?;
+            app.render();
 
             std::thread::sleep(
-                Duration::from_micros(1_000_000 / 10).saturating_sub(start.elapsed()),
+                Duration::from_micros(1_000_000 / 60).saturating_sub(start.elapsed()),
             );
         }
         Ok(())
@@ -133,7 +160,21 @@ impl App {
         while event::poll(Duration::from_secs(0))? {
             match event::read()? {
                 Event::Mouse(event) => {
-                    self.chess.handle_mouse_event(event);
+                    if self
+                        .render_area
+                        .contains(Position::new(event.column, event.row))
+                    {
+                        let (column, row) = (
+                            event.column.wrapping_sub(self.render_area.x),
+                            event.row.wrapping_sub(self.render_area.y),
+                        );
+                        let event = event::MouseEvent {
+                            column,
+                            row,
+                            ..event
+                        };
+                        self.chess.handle_mouse_event(event);
+                    }
                 }
                 Event::Key(KeyEvent {
                     kind: KeyEventKind::Press,
@@ -141,15 +182,19 @@ impl App {
                     ..
                 }) => {
                     self.chess.handle_key_press(code);
-                }
-                Event::Resize(w, h) => {
-                    self.chess
-                        .set_tile_size(w.min(h * 2) / chessboard::SIZE as u16);
+                    self.render();
                 }
                 _ => {}
             }
         }
         Ok(())
+    }
+
+    fn render(&mut self) {
+        let _ = self.tui.draw(|frame| {
+            frame.render_widget(&mut self.chess, self.render_area);
+            frame.set_cursor(0, 0);
+        });
     }
 }
 
