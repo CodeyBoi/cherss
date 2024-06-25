@@ -1,9 +1,9 @@
-use std::ops::Not;
+use std::{ops::Not, slice::Iter};
 
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style, Stylize},
+    style::{Style, Stylize},
     widgets::Widget,
 };
 
@@ -44,6 +44,18 @@ impl PieceType {
             PieceType::Queen => 9,
             PieceType::King => u8::MAX,
         }
+    }
+
+    pub fn iter() -> Iter<'static, PieceType> {
+        static TYPES: [PieceType; 6] = [
+            PieceType::Pawn,
+            PieceType::Knight,
+            PieceType::Bishop,
+            PieceType::Rook,
+            PieceType::Queen,
+            PieceType::King,
+        ];
+        TYPES.iter()
     }
 }
 

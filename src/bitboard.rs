@@ -1,4 +1,6 @@
-use std::ops::{Index, Not};
+use std::ops::{Index, IndexMut, Not};
+
+use lazy_static::lazy_static;
 
 use crate::{
     chess::{Chess, ChessMoveError, Coords, Move, Position},
@@ -8,6 +10,49 @@ use crate::{
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct BitBoard(pub u64);
 
+lazy_static! {
+    static ref RAY_E: [BitBoard; 64] = {
+        let mut rays = [BitBoard::zero(); 64];
+        for (i, ray) in rays.iter_mut().enumerate() {
+            let pos = Position(i as u8);
+            for file_offset in pos.file() + 1..8 {
+                *ray = ray.set(pos.0 + file_offset);
+            }
+        }
+        rays
+    };
+    static ref RAY_NE: [BitBoard; 64] = {
+        let mut rays = [BitBoard::zero(); 64];
+        for (i, ray) in rays.iter_mut().enumerate() {
+            let pos = Position(i as u8);
+            for file_offset in 0..pos.file() {
+                *ray = ray.set(pos.0 - file_offset);
+            }
+        }
+        rays
+    };
+    static ref RAY_N: [BitBoard; 64] = {
+        let mut rays = [BitBoard::zero(); 64];
+        for (i, ray) in rays.iter_mut().enumerate() {
+            let pos = Position(i as u8);
+            for file_offset in pos.file()..8 {
+                *ray = ray.set(pos.0 + file_offset);
+            }
+        }
+        rays
+    };
+    static ref RAY_NW: [BitBoard; 64] = {
+        let mut rays = [BitBoard::zero(); 64];
+        for (i, ray) in rays.iter_mut().enumerate() {
+            let pos = Position(i as u8);
+            for file_offset in pos.file()..8 {
+                *ray = ray.set(pos.0 + file_offset);
+            }
+        }
+        rays
+    };
+}
+
 impl BitBoard {
     const FULL: Self = Self(!0);
 
@@ -16,8 +61,14 @@ impl BitBoard {
     const G_FILE: Self = Self(0x0202_0202_0202_0202);
     const H_FILE: Self = Self(0x0101_0101_0101_0101);
 
+    const RANK_1: Self = Self(0xff00_0000_0000_0000);
     const RANK_2: Self = Self(0x00ff_0000_0000_0000);
     const RANK_7: Self = Self(0x0000_0000_0000_ff00);
+    const RANK_8: Self = Self(0x0000_0000_0000_00ff);
+
+    pub const fn zero() -> Self {
+        Self(0)
+    }
 
     pub const fn set(self, idx: u8) -> Self {
         Self(self.0 | (1 << idx))
@@ -78,11 +129,23 @@ impl Index<PieceType> for Pieces {
     }
 }
 
+impl IndexMut<PieceType> for Pieces {
+    fn index_mut(&mut self, index: PieceType) -> &mut Self::Output {
+        &mut self.0[index as usize]
+    }
+}
+
 impl Index<ChessColor> for ColorMaps {
     type Output = BitBoard;
 
     fn index(&self, index: ChessColor) -> &Self::Output {
         &self.0[index as usize]
+    }
+}
+
+impl IndexMut<ChessColor> for ColorMaps {
+    fn index_mut(&mut self, index: ChessColor) -> &mut Self::Output {
+        &mut self.0[index as usize]
     }
 }
 
@@ -94,7 +157,7 @@ impl Not for BitBoard {
     }
 }
 
-struct Chessboard {
+pub struct Chessboard {
     pieces: Pieces,
     colors: ColorMaps,
 }
@@ -107,6 +170,22 @@ impl Chessboard {
     fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError> {
         todo!()
     }
+
+    // /// Returns all tiles attacked by the given `color`.
+    // fn attacked_by(&self, color: ChessColor) -> BitBoard {
+    //     static PIECES: [PieceType; 5] = [
+    //         PieceType::Pawn,
+    //         PieceType::Knight,
+    //         PieceType::Bishop,
+    //         PieceType::Rook,
+    //         PieceType::Queen,
+    //         // We don't need to process the king as the king cannot threaten the other king
+    //     ];
+    //     let mut moves = Vec::new();
+    //     for piece in PIECES {
+    //         self.generate_moves(&mut moves, piece, color);
+    //     }
+    // }
 
     fn generate_moves(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor) {
         use PieceType as P;
@@ -217,8 +296,53 @@ impl Chessboard {
         todo!()
     }
 
-    fn generate_king_moves(&self, moves: &mut Vec<Move>, pieces: BitBoard, color: ChessColor) {
-        todo!()
+    fn generate_king_moves(&self, moves: &mut Vec<Move>, piece: BitBoard, color: ChessColor) {
+        // We cannot move to or capture our own pieces
+        let valid_tiles = !self.colors[color];
+
+        for offset in [Coords::CARDINAL_OFFSETS, Coords::DIAGONAL_OFFSETS].concat() {
+            // Filter out moves which will go OOB horisontally (we don't have to worry about vertical
+            // OOB as they will be shifted away)
+            let mask = match offset.file {
+                -1 => !BitBoard::A_FILE,
+                1 => !BitBoard::H_FILE,
+                _ => BitBoard::FULL,
+            };
+            let possible_moves = piece
+                .intersection(mask)
+                .translated(offset)
+                .intersection(valid_tiles);
+            Self::add_moves(moves, offset, &possible_moves.serialized());
+        }
+    }
+}
+
+impl Default for Chessboard {
+    fn default() -> Self {
+        use BitBoard as B;
+        const PAWNS: B = B::RANK_2.union(B::RANK_7);
+        const KNIGHTS: B = B::zero().set(1).set(6).set(57).set(62);
+        const BISHOPS: B = B::zero().set(2).set(5).set(58).set(61);
+        const ROOKS: B = B::zero().set(0).set(7).set(56).set(63);
+        const QUEENS: B = B::zero().set(3).set(59);
+        const KINGS: B = B::zero().set(4).set(60);
+
+        const WHITE: B = B::RANK_1.union(B::RANK_2);
+        const BLACK: B = B::RANK_7.union(B::RANK_8);
+
+        let mut pieces = Pieces([BitBoard::zero(); 6]);
+        pieces[PieceType::Pawn] = PAWNS;
+        pieces[PieceType::Knight] = KNIGHTS;
+        pieces[PieceType::Bishop] = BISHOPS;
+        pieces[PieceType::Rook] = ROOKS;
+        pieces[PieceType::Queen] = QUEENS;
+        pieces[PieceType::King] = KINGS;
+
+        let mut colors = ColorMaps([BitBoard::zero(); 2]);
+        colors[ChessColor::White] = WHITE;
+        colors[ChessColor::Black] = BLACK;
+
+        Self { pieces, colors }
     }
 }
 
