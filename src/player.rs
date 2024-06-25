@@ -1,9 +1,6 @@
 use rand::seq::SliceRandom as _;
 
-use crate::{
-    chessboard::{Chessboard, Position},
-    piece::ChessColor,
-};
+use crate::{chess::Coords, chessboard::Chessboard, piece::ChessColor};
 
 #[derive(Clone, Copy)]
 pub enum Player {
@@ -18,19 +15,19 @@ pub enum BotStrategy {
 }
 
 impl BotStrategy {
-    pub fn choose_move(self, board: &mut Chessboard) -> Option<(Position, Position)> {
+    pub fn choose_move(self, board: &mut Chessboard) -> Option<(Coords, Coords)> {
         match self {
             BotStrategy::Random => Self::random(board),
             BotStrategy::DarkSquares => Self::dark_squares(board),
         }
     }
 
-    pub fn random(board: &mut Chessboard) -> Option<(Position, Position)> {
+    pub fn random(board: &mut Chessboard) -> Option<(Coords, Coords)> {
         let moves = board.all_moves();
         moves[..].choose(&mut rand::thread_rng()).cloned()
     }
 
-    fn dark_squares(board: &mut Chessboard) -> Option<(Position, Position)> {
+    fn dark_squares(board: &mut Chessboard) -> Option<(Coords, Coords)> {
         let moves = board.all_moves();
         moves
             .iter()
@@ -46,7 +43,7 @@ impl BotStrategy {
             .or_else(|| Self::random(board))
     }
 
-    fn mirror(board: &mut Chessboard) -> Option<(Position, Position)> {
+    fn mirror(board: &mut Chessboard) -> Option<(Coords, Coords)> {
         let moves = board.all_moves();
         if let Some(last_move) = board.history.last() {}
 

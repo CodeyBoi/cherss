@@ -1,12 +1,8 @@
 use core::panic;
-use std::{
-    fmt::Display,
-    ops::{Add, Sub},
-    str::FromStr,
-};
+use std::str::FromStr;
 
 use crate::{
-    chess::ChessMoveError,
+    chess::{ChessMoveError, Coords},
     chessgame::ChessGame,
     piece::{ChessColor, Piece, PieceType},
     player::Player,
@@ -14,72 +10,20 @@ use crate::{
 
 pub const SIZE: usize = 8;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Position {
-    pub row: i8,
-    pub col: i8,
-}
-
 #[derive(Debug)]
 pub enum MoveType {
     Standard,
-    EnPassant { capture_pos: Position },
+    EnPassant { capture_pos: Coords },
     Castle,
     Promotion,
 }
 
 #[derive(Debug)]
 pub struct ChessHistoryEntry {
-    pub from: Position,
-    pub to: Position,
+    pub from: Coords,
+    pub to: Coords,
     pub captured_piece: Option<Piece>,
     pub move_type: MoveType,
-}
-
-impl Position {
-    pub const fn new(row: i8, col: i8) -> Self {
-        Self { row, col }
-    }
-
-    pub fn in_bounds(&self) -> bool {
-        0 <= self.row
-            && self.row < SIZE.try_into().unwrap()
-            && 0 <= self.col
-            && self.col < SIZE.try_into().unwrap()
-    }
-
-    pub fn tile_color(&self) -> ChessColor {
-        if (self.row + self.col) % 2 == 0 {
-            ChessColor::Black
-        } else {
-            ChessColor::White
-        }
-    }
-}
-
-impl Display for Position {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut s = String::with_capacity(2);
-        s.push((self.col as u8 + b'a') as char);
-        s.push((self.row as u8 + b'1') as char);
-        f.write_str(&s)
-    }
-}
-
-impl Add for Position {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self::new(self.row + rhs.row, self.col + rhs.col)
-    }
-}
-
-impl Sub for Position {
-    type Output = Self;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        Self::new(self.row - rhs.row, self.col - rhs.col)
-    }
 }
 
 #[derive(Debug)]
@@ -125,11 +69,11 @@ pub struct Chessboard {
     first_turn_color: ChessColor,
     white_initial_castling_rights: CastlingRights,
     black_initial_castling_rights: CastlingRights,
-    en_passant_target: Option<Position>,
+    en_passant_target: Option<Coords>,
     start_turn_number: u32,
-    white_king: Position,
+    white_king: Coords,
     white_player: Player,
-    black_king: Position,
+    black_king: Coords,
     black_player: Player,
     halfmove_clock: u8,
     pub result: ChessResult,
@@ -145,9 +89,9 @@ impl Chessboard {
             black_initial_castling_rights: CastlingRights::default(),
             en_passant_target: None,
             start_turn_number: 0,
-            white_king: Position::new(0, 0),
+            white_king: Coords::new(0, 0),
             white_player: Player::Human,
-            black_king: Position::new(0, 0),
+            black_king: Coords::new(0, 0),
             black_player: Player::Human,
             halfmove_clock: 0,
             result: ChessResult::Undecided,
@@ -182,8 +126,8 @@ impl Chessboard {
             } else if let Some(piece) = Piece::from_fen(c) {
                 if piece.piece == PieceType::King {
                     match piece.color {
-                        ChessColor::White => self.white_king = Position::new(row as i8, col as i8),
-                        ChessColor::Black => self.black_king = Position::new(row as i8, col as i8),
+                        ChessColor::White => self.white_king = Coords::new(row as i8, col as i8),
+                        ChessColor::Black => self.black_king = Coords::new(row as i8, col as i8),
                     }
                 }
                 self.board[row][col] = Some(piece);
@@ -221,7 +165,7 @@ impl Chessboard {
             crs
         };
 
-        self.en_passant_target = Position::from_str(input.next().unwrap()).ok();
+        self.en_passant_target = Coords::from_str(input.next().unwrap()).ok();
 
         self.halfmove_clock = input
             .next()
@@ -309,7 +253,7 @@ impl Chessboard {
         ChessGame::new(self)
     }
 
-    pub fn make_move(&mut self, from: Position, to: Position) -> Result<(), ChessMoveError> {
+    pub fn make_move(&mut self, from: Coords, to: Coords) -> Result<(), ChessMoveError> {
         if self.result != ChessResult::Undecided {
             return Err(ChessMoveError::GameHasEnded);
         }
@@ -353,13 +297,9 @@ impl Chessboard {
         Ok(())
     }
 
-    pub(crate) fn move_piece(
-        &mut self,
-        from: Position,
-        to: Position,
-    ) -> Result<(), ChessMoveError> {
+    pub(crate) fn move_piece(&mut self, from: Coords, to: Coords) -> Result<(), ChessMoveError> {
         // TODO: Add promotion
-        if !from.in_bounds() || !to.in_bounds() {
+        if !from.is_in_bounds() || !to.is_in_bounds() {
             return Err(ChessMoveError::OutOfBounds);
         }
 
@@ -391,44 +331,44 @@ impl Chessboard {
                 if let Some(en_passant_target) = self.en_passant_target {
                     // If a pawn got to en passant target then move must have been en passant
                     if piece.piece == PieceType::Pawn && to == en_passant_target {
-                        let pos = Position::new(to.row + row_offset, to.col);
+                        let pos = Coords::new(to.file + row_offset, to.rank);
                         captured_piece = self.at(pos);
                         en_passant_pos = Some(pos);
-                        self.board[pos.row as usize][pos.col as usize] = None;
+                        self.board[pos.file as usize][pos.rank as usize] = None;
                     }
                 }
 
                 // Update en passant target
                 self.en_passant_target =
-                    if piece.piece == PieceType::Pawn && from.row.abs_diff(to.row) == 2 {
-                        Some(Position::new(to.row + row_offset, to.col))
+                    if piece.piece == PieceType::Pawn && from.file.abs_diff(to.file) == 2 {
+                        Some(Coords::new(to.file + row_offset, to.rank))
                     } else {
                         None
                     };
 
                 // Move piece
-                self.board[to.row as usize][to.col as usize] = Some(piece);
-                self.board[from.row as usize][from.col as usize] = None;
+                self.board[to.file as usize][to.rank as usize] = Some(piece);
+                self.board[from.file as usize][from.rank as usize] = None;
 
                 let move_type = if let Some(en_passant_pos) = en_passant_pos {
                     MoveType::EnPassant {
                         capture_pos: en_passant_pos,
                     }
-                } else if piece.piece == PieceType::King && from.col.abs_diff(to.col) >= 2 {
-                    let row = from.row as usize;
-                    let (from_col, to_col) = if from.col < to.col {
+                } else if piece.piece == PieceType::King && from.rank.abs_diff(to.rank) >= 2 {
+                    let row = from.file as usize;
+                    let (from_col, to_col) = if from.rank < to.rank {
                         // Castle king side
                         (SIZE - 1, SIZE - 3)
                     } else {
                         // Castle queen side
                         (0, 3)
                     };
-                    self.board[row][to_col] = self.at(Position::new(row as i8, from_col as i8));
+                    self.board[row][to_col] = self.at(Coords::new(row as i8, from_col as i8));
                     self.board[row][from_col] = None;
                     MoveType::Castle
                 } else if piece.piece == PieceType::Pawn
-                    && ((piece.color == ChessColor::White && to.row == SIZE as i8 - 1)
-                        || (piece.color == ChessColor::Black && to.row == 0))
+                    && ((piece.color == ChessColor::White && to.file == SIZE as i8 - 1)
+                        || (piece.color == ChessColor::Black && to.file == 0))
                 {
                     MoveType::Promotion
                 } else {
@@ -448,7 +388,7 @@ impl Chessboard {
         }
     }
 
-    pub fn pieces(&self) -> Vec<(Piece, Position)> {
+    pub fn pieces(&self) -> Vec<(Piece, Coords)> {
         self.board
             .iter()
             .enumerate()
@@ -459,13 +399,13 @@ impl Chessboard {
                     .filter_map(move |(col, piece)| {
                         piece
                             .as_ref()
-                            .map(|piece| (*piece, Position::new(row as i8, col as i8)))
+                            .map(|piece| (*piece, Coords::new(row as i8, col as i8)))
                     })
             })
             .collect::<Vec<_>>()
     }
 
-    pub fn all_moves(&mut self) -> Vec<(Position, Position)> {
+    pub fn all_moves(&mut self) -> Vec<(Coords, Coords)> {
         let current_turn = self.current_turn_color();
         self.pieces()
             .iter()
@@ -518,30 +458,30 @@ impl Chessboard {
 
         self.result = ChessResult::Undecided;
 
-        self.board[from.row as usize][from.col as usize] = self.at(to);
-        self.board[to.row as usize][to.col as usize] = None;
+        self.board[from.file as usize][from.rank as usize] = self.at(to);
+        self.board[to.file as usize][to.rank as usize] = None;
 
         match move_type {
             MoveType::EnPassant { capture_pos } => {
-                self.board[capture_pos.row as usize][capture_pos.col as usize] = captured_piece;
+                self.board[capture_pos.file as usize][capture_pos.rank as usize] = captured_piece;
             }
             MoveType::Castle => {
-                let row = from.row as usize;
-                let (from_col, to_col) = if from.col < to.col {
+                let row = from.file as usize;
+                let (from_col, to_col) = if from.rank < to.rank {
                     // Castle king side
                     (SIZE - 1, SIZE - 3)
                 } else {
                     // Castle queen side
                     (0, 3)
                 };
-                self.board[row][from_col] = self.at(Position::new(row as i8, to_col as i8));
+                self.board[row][from_col] = self.at(Coords::new(row as i8, to_col as i8));
                 self.board[row][to_col] = None;
             }
             MoveType::Promotion => todo!(),
             _ => {}
         }
 
-        self.board[to.row as usize][to.col as usize] = captured_piece;
+        self.board[to.file as usize][to.rank as usize] = captured_piece;
 
         if let Some(piece) = self.at(from) {
             // Update king position
@@ -557,15 +497,15 @@ impl Chessboard {
         self.en_passant_target = if let Some(last_move) = self.history.last() {
             if let Some(piece) = self.at(last_move.to) {
                 if piece.piece == PieceType::Pawn
-                    && last_move.from.row.abs_diff(last_move.to.row) == 2
+                    && last_move.from.file.abs_diff(last_move.to.file) == 2
                 {
                     let row_offset = match piece.color {
                         ChessColor::White => -1,
                         ChessColor::Black => 1,
                     };
-                    Some(Position::new(
-                        last_move.to.row + row_offset,
-                        last_move.to.col,
+                    Some(Coords::new(
+                        last_move.to.file + row_offset,
+                        last_move.to.rank,
                     ))
                 } else {
                     None
@@ -579,12 +519,12 @@ impl Chessboard {
     }
 
     fn castling_rights(&self) -> (CastlingRights, CastlingRights) {
-        const WHITE_KING_START: Position = Position::new(0, 4);
-        const WHITE_LROOK_START: Position = Position::new(0, 0);
-        const WHITE_RROOK_START: Position = Position::new(0, 7);
-        const BLACK_KING_START: Position = Position::new(7, 4);
-        const BLACK_LROOK_START: Position = Position::new(7, 0);
-        const BLACK_RROOK_START: Position = Position::new(7, 7);
+        const WHITE_KING_START: Coords = Coords::new(0, 4);
+        const WHITE_LROOK_START: Coords = Coords::new(0, 0);
+        const WHITE_RROOK_START: Coords = Coords::new(0, 7);
+        const BLACK_KING_START: Coords = Coords::new(7, 4);
+        const BLACK_LROOK_START: Coords = Coords::new(7, 0);
+        const BLACK_RROOK_START: Coords = Coords::new(7, 7);
 
         let mut crs = (
             self.white_initial_castling_rights,
@@ -608,15 +548,15 @@ impl Chessboard {
         crs
     }
 
-    pub fn at(&self, pos: Position) -> Option<Piece> {
-        if pos.in_bounds() {
-            self.board[pos.row as usize][pos.col as usize]
+    pub fn at(&self, pos: Coords) -> Option<Piece> {
+        if pos.is_in_bounds() {
+            self.board[pos.file as usize][pos.rank as usize]
         } else {
             None
         }
     }
 
-    fn is_attacked(&self, pos: Position, color: ChessColor) -> bool {
+    fn is_attacked(&self, pos: Coords, color: ChessColor) -> bool {
         if self
             .rook_moves(color, pos)
             .iter()
@@ -699,7 +639,7 @@ impl Chessboard {
         self.is_attacked(pos, color)
     }
 
-    fn try_move(&mut self, from: Position, to: Position) -> bool {
+    fn try_move(&mut self, from: Coords, to: Coords) -> bool {
         let current_turn = self.current_turn_color();
 
         if self.move_piece(from, to).is_err() {
@@ -711,7 +651,7 @@ impl Chessboard {
         ret
     }
 
-    pub fn moves(&mut self, from: Position) -> Vec<Position> {
+    pub fn moves(&mut self, from: Coords) -> Vec<Coords> {
         self.generate_moves(from)
             .iter()
             .cloned()
@@ -719,7 +659,7 @@ impl Chessboard {
             .collect()
     }
 
-    fn generate_moves(&self, pos: Position) -> Vec<Position> {
+    fn generate_moves(&self, pos: Coords) -> Vec<Coords> {
         use PieceType as P;
         match self.at(pos) {
             Some(piece) => match piece.piece {
@@ -734,20 +674,20 @@ impl Chessboard {
         }
     }
 
-    fn pawn_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
+    fn pawn_moves(&self, color: ChessColor, pos: Coords) -> Vec<Coords> {
         let row_offset = match color {
             ChessColor::White => 1,
             ChessColor::Black => -1,
         };
         let mut moves = Vec::new();
-        let new_pos = Position::new(pos.row + row_offset, pos.col);
+        let new_pos = Coords::new(pos.file + row_offset, pos.rank);
         if self.at(new_pos).is_none() {
             moves.push(new_pos);
 
             // Check for first move
-            let has_moved = (color == ChessColor::White && pos.row != 1)
-                || (color == ChessColor::Black && pos.row != 6);
-            let new_pos = Position::new(pos.row + row_offset * 2, pos.col);
+            let has_moved = (color == ChessColor::White && pos.file != 1)
+                || (color == ChessColor::Black && pos.file != 6);
+            let new_pos = Coords::new(pos.file + row_offset * 2, pos.rank);
             if !has_moved && self.at(new_pos).is_none() {
                 moves.push(new_pos);
             }
@@ -755,7 +695,7 @@ impl Chessboard {
 
         // Check for possible captures
         for col_offset in [-1, 1] {
-            let new_pos = Position::new(pos.row + row_offset, pos.col + col_offset);
+            let new_pos = Coords::new(pos.file + row_offset, pos.rank + col_offset);
             if let Some(piece) = self.at(new_pos) {
                 if piece.color != color {
                     moves.push(new_pos);
@@ -784,19 +724,19 @@ impl Chessboard {
         (1, 2),
     ];
 
-    fn knight_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
+    fn knight_moves(&self, color: ChessColor, pos: Coords) -> Vec<Coords> {
         self.moves_with_offsets(color, pos, Self::KNIGHT_OFFSETS.as_slice())
     }
 
-    fn bishop_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
+    fn bishop_moves(&self, color: ChessColor, pos: Coords) -> Vec<Coords> {
         self.moves_with_directions(color, pos, Self::DIAGONAL_DIRECTIONS.as_slice())
     }
 
-    fn rook_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
+    fn rook_moves(&self, color: ChessColor, pos: Coords) -> Vec<Coords> {
         self.moves_with_directions(color, pos, Self::CARDINAL_DIRECTIONS.as_slice())
     }
 
-    fn queen_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
+    fn queen_moves(&self, color: ChessColor, pos: Coords) -> Vec<Coords> {
         self.moves_with_directions(
             color,
             pos,
@@ -806,7 +746,7 @@ impl Chessboard {
         )
     }
 
-    fn king_moves(&self, color: ChessColor, pos: Position) -> Vec<Position> {
+    fn king_moves(&self, color: ChessColor, pos: Coords) -> Vec<Coords> {
         let mut moves = self.moves_with_offsets(
             color,
             pos,
@@ -823,20 +763,20 @@ impl Chessboard {
         };
         if castling_rights.queen_side
             && (1..=3).all(|i| {
-                let new_pos = Position::new(pos.row, pos.col - i);
+                let new_pos = Coords::new(pos.file, pos.rank - i);
                 self.at(new_pos).is_none() && (!self.is_attacked(new_pos, color) || i == 3)
             })
         {
-            moves.push(Position::new(pos.row, pos.col - 2));
+            moves.push(Coords::new(pos.file, pos.rank - 2));
         }
 
         if castling_rights.king_side
             && (1..=2).all(|i| {
-                let new_pos = Position::new(pos.row, pos.col + i);
+                let new_pos = Coords::new(pos.file, pos.rank + i);
                 self.at(new_pos).is_none() && !self.is_attacked(new_pos, color)
             })
         {
-            moves.push(Position::new(pos.row, pos.col + 2));
+            moves.push(Coords::new(pos.file, pos.rank + 2));
         }
 
         moves
@@ -845,15 +785,15 @@ impl Chessboard {
     fn moves_with_directions(
         &self,
         color: ChessColor,
-        pos: Position,
+        pos: Coords,
         directions: &[(i8, i8)],
-    ) -> Vec<Position> {
+    ) -> Vec<Coords> {
         let mut moves = Vec::new();
         for (d_row, d_col) in directions {
             for i in 1.. {
-                let new_pos = Position::new(pos.row + d_row * i, pos.col + d_col * i);
+                let new_pos = Coords::new(pos.file + d_row * i, pos.rank + d_col * i);
 
-                if !new_pos.in_bounds() {
+                if !new_pos.is_in_bounds() {
                     break;
                 }
 
@@ -876,14 +816,14 @@ impl Chessboard {
     fn moves_with_offsets(
         &self,
         color: ChessColor,
-        pos: Position,
+        pos: Coords,
         offsets: &[(i8, i8)],
-    ) -> Vec<Position> {
+    ) -> Vec<Coords> {
         let mut moves = Vec::new();
         for (d_row, d_col) in offsets {
-            let new_pos = Position::new(pos.row + d_row, pos.col + d_col);
+            let new_pos = Coords::new(pos.file + d_row, pos.rank + d_col);
 
-            if !new_pos.in_bounds() {
+            if !new_pos.is_in_bounds() {
                 continue;
             }
 
@@ -905,7 +845,7 @@ impl Chessboard {
 #[derive(Debug)]
 pub struct ParsePositionError;
 
-impl FromStr for Position {
+impl FromStr for Coords {
     type Err = ParsePositionError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {

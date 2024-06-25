@@ -1,3 +1,5 @@
+use std::ops::Not;
+
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -49,6 +51,17 @@ impl PieceType {
 pub enum ChessColor {
     White,
     Black,
+}
+
+impl Not for ChessColor {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Self::White => Self::Black,
+            Self::Black => Self::White,
+        }
+    }
 }
 
 const PAWN_RENDER: [&str; 4] = [r"   ()   ", r"   )(   ", r"  (cc)  ", r" /cccc\ "];

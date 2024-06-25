@@ -1,3 +1,4 @@
+use bitboard::BitBoard;
 use chessboard::Chessboard;
 use player::{BotStrategy, Player};
 use tui::App;

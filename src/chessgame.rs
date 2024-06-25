@@ -1,4 +1,5 @@
 use crate::{
+    chess::Coords,
     chessboard::ChessResult,
     player::Player,
     tui::{Tile, TileStatus},
@@ -13,13 +14,13 @@ use sdl2::{
 };
 
 use crate::{
-    chessboard::{Chessboard, Position, SIZE},
+    chessboard::{Chessboard, SIZE},
     piece::ChessColor,
 };
 
 pub struct ChessGame {
     board: Chessboard,
-    active_tile: Option<Position>,
+    active_tile: Option<Coords>,
     pub bots_active: bool,
     pub is_running: bool,
     pub tile_size: u16,
@@ -43,13 +44,13 @@ impl Widget for &mut ChessGame {
         let mut is_movable = [false; SIZE * SIZE];
         if let Some(active_tile) = self.active_tile {
             for pos in self.board.moves(active_tile) {
-                let idx = (pos.row * SIZE as i8 + pos.col) as usize;
+                let idx = (pos.file * SIZE as i8 + pos.rank) as usize;
                 is_movable[idx] = true;
             }
         }
 
         for (i, (tile_area, &is_movable)) in tiles.iter().zip(is_movable.iter()).enumerate() {
-            let pos = Position::new((i / SIZE) as i8, (i % SIZE) as i8);
+            let pos = Coords::new((i / SIZE) as i8, (i % SIZE) as i8);
             let piece = self.board.at(pos);
             let status = if is_movable {
                 if self.board.at(pos).is_some() {
@@ -62,7 +63,7 @@ impl Widget for &mut ChessGame {
             } else {
                 TileStatus::Default
             };
-            let color = if (i + pos.row as usize) % 2 == 0 {
+            let color = if (i + pos.file as usize) % 2 == 0 {
                 ChessColor::Black
             } else {
                 ChessColor::White
@@ -176,7 +177,11 @@ impl ChessGame {
 
         // Highlight last move
         if let Some(prev_move) = self.board.history.last() {
-            for Position { row, col } in [prev_move.from, prev_move.to] {
+            for Coords {
+                file: row,
+                rank: col,
+            } in [prev_move.from, prev_move.to]
+            {
                 let row = 7 - row;
                 let color = if (row + col) % 2 == 0 {
                     Color::RGB(205, 210, 106)
@@ -200,7 +205,7 @@ impl ChessGame {
             let color = Color::RGBA(55, 180, 55, 75);
             let margin = 40;
             canvas.set_draw_color(color);
-            let (row, col) = (7 - active_tile.row, active_tile.col);
+            let (row, col) = (7 - active_tile.file, active_tile.rank);
             canvas
                 .fill_rect(SDLRect::new(
                     col as i32 * tile_size as i32,
@@ -210,7 +215,11 @@ impl ChessGame {
                 ))
                 .unwrap();
 
-            for pos @ Position { row, col } in self.board.moves(active_tile) {
+            for pos @ Coords {
+                file: row,
+                rank: col,
+            } in self.board.moves(active_tile)
+            {
                 let row = 7 - row;
                 // Highlight pieces that can be captured
                 if self.board.at(pos).is_some() {
@@ -276,7 +285,7 @@ impl ChessGame {
     }
 
     pub fn handle_click(&mut self, row: u8, col: u8) {
-        let pos = Position::new(row as i8, col as i8);
+        let pos = Coords::new(row as i8, col as i8);
 
         // If we have an active tile, try to move
         if let Some(last_interact) = self.active_tile {
