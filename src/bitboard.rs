@@ -11,6 +11,13 @@ use crate::{
 pub struct BitBoard(pub u64);
 
 lazy_static! {
+    static ref DIAGONALS_NW: [BitBoard; 15] = {
+        let mut lines = [BitBoard::zero(); 15];
+        for (rank_offset, line) in lines.iter_mut().enumerate() {
+            let pos = Position(i as u8);
+        }
+        lines
+    };
     static ref RAY_E: [BitBoard; 64] = {
         let mut rays = [BitBoard::zero(); 64];
         for (i, ray) in rays.iter_mut().enumerate() {
@@ -55,6 +62,9 @@ lazy_static! {
 
 impl BitBoard {
     const FULL: Self = Self(!0);
+
+    const DIAGONAL_NW: Self = Self(0x8040_2010_0804_0201);
+    const DIAGONAL_NE: Self = Self(0x0081_0204_0810_2040);
 
     const A_FILE: Self = Self(0x8080_8080_8080_8080);
     const B_FILE: Self = Self(0x4040_4040_4040_4040);
