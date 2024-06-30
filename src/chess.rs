@@ -3,7 +3,10 @@ use std::{
     ops::{Add, Mul, Neg, Sub},
 };
 
-use crate::piece::{ChessColor, PieceType};
+use crate::{
+    bitboard::BitBoard,
+    piece::{ChessColor, PieceType},
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Move(pub Position, pub Position);
@@ -68,6 +71,10 @@ impl Position {
             return Err(ParseMoveError::InvalidFile);
         };
         Ok(Position(row * 8 + col))
+    }
+
+    pub fn to_mask(self) -> BitBoard {
+        BitBoard(1 << self.0)
     }
 }
 

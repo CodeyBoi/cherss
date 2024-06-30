@@ -23,6 +23,15 @@ pub enum PieceType {
     King,
 }
 
+pub static PIECE_TYPES: [PieceType; 6] = [
+    PieceType::Pawn,
+    PieceType::Knight,
+    PieceType::Bishop,
+    PieceType::Rook,
+    PieceType::Queen,
+    PieceType::King,
+];
+
 impl PieceType {
     pub fn to_char(self) -> char {
         match self {

@@ -1,14 +1,13 @@
-use core::slice::SlicePattern;
 use std::{
     fmt::{Display, Write},
-    ops::{Deref, Index, IndexMut, Not, Sub},
+    ops::{Deref, Index, IndexMut, Not},
 };
 
 use lazy_static::lazy_static;
 
 use crate::{
     chess::{Chess, ChessMoveError, Coords, Dir, Move, Position},
-    piece::{ChessColor, PieceType},
+    piece::{ChessColor, Piece, PieceType, PIECE_TYPES},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -195,29 +194,65 @@ impl Chessboard {
         self.pieces[piece].intersection(self.colors[color])
     }
 
+    pub fn piece_at(&self, pos: Position) -> Option<Piece> {
+        let mask = pos.to_mask();
+        let color = if self.colors[ChessColor::White].intersection(mask).0 != 0 {
+            ChessColor::White
+        } else if self.colors[ChessColor::Black].intersection(mask).0 != 0 {
+            ChessColor::Black
+        } else {
+            return None;
+        };
+
+        let piece = PIECE_TYPES
+            .iter()
+            .find(|&&piece| self.pieces[piece].intersection(mask).0 != 0)?;
+
+        Some(Piece::new(color, *piece))
+    }
+
     fn occupancy(&self) -> BitBoard {
         self.colors[ChessColor::White].union(self.colors[ChessColor::Black])
     }
 
-    fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError> {
-        todo!()
+    fn make_move(&mut self, Move(from, to): Move) -> Result<(), ChessMoveError> {
+        let piece = self.piece_at(from).ok_or(ChessMoveError::MissingPiece)?;
+        let mut legal_moves = Vec::new();
+        self.generate_moves(&mut legal_moves, piece.piece, piece.color);
+
+        if !legal_moves.iter().any(|&Move(f, t)| f == from && t == to) {
+            return Err(ChessMoveError::IllegalMove);
+        }
+
+        self.move_piece(Move(from, to))?;
+
+        Ok(())
     }
 
-    // /// Returns all tiles attacked by the given `color`.
-    // fn attacked_by(&self, color: ChessColor) -> BitBoard {
-    //     static PIECES: [PieceType; 5] = [
-    //         PieceType::Pawn,
-    //         PieceType::Knight,
-    //         PieceType::Bishop,
-    //         PieceType::Rook,
-    //         PieceType::Queen,
-    //         // We don't need to process the king as the king cannot threaten the other king
-    //     ];
-    //     let mut moves = Vec::new();
-    //     for piece in PIECES {
-    //         self.generate_moves(&mut moves, piece, color);
-    //     }
-    // }
+    fn move_piece(&mut self, Move(from, to): Move) -> Result<(), ChessMoveError> {
+        if !from.is_in_bounds() || !to.is_in_bounds() {
+            return Err(ChessMoveError::OutOfBounds);
+        }
+
+        match (self.piece_at(from), self.piece_at(to)) {
+            (Some(piece), capture) => {
+                if capture.is_some_and(|o| o.color == piece.color) {
+                    return Err(ChessMoveError::SameColorCapture);
+                }
+
+                self.pieces[piece.piece] = self.pieces[piece.piece].clear(from.0).set(to.0);
+                self.colors[piece.color] = self.colors[piece.color].clear(from.0).set(to.0);
+
+                if let Some(cap) = capture {
+                    self.pieces[cap.piece] = self.pieces[cap.piece].clear(to.0);
+                    self.colors[cap.color] = self.colors[cap.color].clear(to.0);
+                }
+
+                Ok(())
+            }
+            (None, _) => Err(ChessMoveError::MissingPiece),
+        }
+    }
 
     fn generate_moves(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor) {
         use PieceType as P;
