@@ -82,18 +82,6 @@ impl Coords {
         Coords::new(-1, 2),
         Coords::new(1, 2),
     ];
-    pub const DIAGONAL_OFFSETS: [Coords; 4] = [
-        Coords::new(-1, -1),
-        Coords::new(1, -1),
-        Coords::new(-1, 1),
-        Coords::new(1, 1),
-    ];
-    pub const CARDINAL_OFFSETS: [Coords; 4] = [
-        Coords::new(0, -1),
-        Coords::new(-1, 0),
-        Coords::new(1, 0),
-        Coords::new(0, 1),
-    ];
 
     pub const fn new(file: i8, rank: i8) -> Self {
         Self { file, rank }
@@ -155,6 +143,29 @@ impl Neg for Coords {
     fn neg(self) -> Self::Output {
         Self::new(-self.file, -self.rank)
     }
+}
+
+pub type Dir = Coords;
+
+impl Dir {
+    // North (N) is defined as the direction white's pawns move
+    pub const N_OFFSET: i8 = 1;
+    pub const S_OFFSET: i8 = -1;
+    pub const E_OFFSET: i8 = 1;
+    pub const W_OFFSET: i8 = -1;
+
+    pub const N: Self = Coords::new(0, Self::N_OFFSET);
+    pub const S: Self = Coords::new(0, Self::S_OFFSET);
+    pub const E: Self = Coords::new(Self::E_OFFSET, 0);
+    pub const W: Self = Coords::new(Self::W_OFFSET, 0);
+
+    pub const NE: Self = Coords::new(Self::E_OFFSET, Self::N_OFFSET);
+    pub const NW: Self = Coords::new(Self::W_OFFSET, Self::N_OFFSET);
+    pub const SW: Self = Coords::new(Self::W_OFFSET, Self::S_OFFSET);
+    pub const SE: Self = Coords::new(Self::E_OFFSET, Self::S_OFFSET);
+
+    pub const CARDINAL: [Coords; 4] = [Dir::N, Dir::S, Dir::E, Dir::W];
+    pub const DIAGONAL: [Coords; 4] = [Dir::NE, Dir::NW, Dir::SW, Dir::SE];
 }
 
 pub enum ParseMoveError {

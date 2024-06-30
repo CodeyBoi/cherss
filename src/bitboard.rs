@@ -1,70 +1,42 @@
-use std::ops::{Index, IndexMut, Not};
+use core::slice::SlicePattern;
+use std::{
+    fmt::{Display, Write},
+    ops::{Deref, Index, IndexMut, Not, Sub},
+};
 
 use lazy_static::lazy_static;
 
 use crate::{
-    chess::{Chess, ChessMoveError, Coords, Move, Position},
+    chess::{Chess, ChessMoveError, Coords, Dir, Move, Position},
     piece::{ChessColor, PieceType},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct BitBoard(pub u64);
 
+type AttackPatterns = [BitBoard; 64];
+
+impl Index<Position> for AttackPatterns {
+    type Output = BitBoard;
+
+    fn index(&self, index: Position) -> &Self::Output {
+        &self[index.0 as usize]
+    }
+}
+
 lazy_static! {
-    static ref DIAGONALS_NW: [BitBoard; 15] = {
-        let mut lines = [BitBoard::zero(); 15];
-        for (rank_offset, line) in lines.iter_mut().enumerate() {
-            let pos = Position(i as u8);
-        }
-        lines
-    };
-    static ref RAY_E: [BitBoard; 64] = {
-        let mut rays = [BitBoard::zero(); 64];
-        for (i, ray) in rays.iter_mut().enumerate() {
-            let pos = Position(i as u8);
-            for file_offset in pos.file() + 1..8 {
-                *ray = ray.set(pos.0 + file_offset);
-            }
-        }
-        rays
-    };
-    static ref RAY_NE: [BitBoard; 64] = {
-        let mut rays = [BitBoard::zero(); 64];
-        for (i, ray) in rays.iter_mut().enumerate() {
-            let pos = Position(i as u8);
-            for file_offset in 0..pos.file() {
-                *ray = ray.set(pos.0 - file_offset);
-            }
-        }
-        rays
-    };
-    static ref RAY_N: [BitBoard; 64] = {
-        let mut rays = [BitBoard::zero(); 64];
-        for (i, ray) in rays.iter_mut().enumerate() {
-            let pos = Position(i as u8);
-            for file_offset in pos.file()..8 {
-                *ray = ray.set(pos.0 + file_offset);
-            }
-        }
-        rays
-    };
-    static ref RAY_NW: [BitBoard; 64] = {
-        let mut rays = [BitBoard::zero(); 64];
-        for (i, ray) in rays.iter_mut().enumerate() {
-            let pos = Position(i as u8);
-            for file_offset in pos.file()..8 {
-                *ray = ray.set(pos.0 + file_offset);
-            }
-        }
-        rays
-    };
+    static ref RAYS_E: AttackPatterns = BitBoard::generate_attack_rays(Dir::E);
+    static ref RAYS_NE: AttackPatterns = BitBoard::generate_attack_rays(Dir::NE);
+    static ref RAYS_N: AttackPatterns = BitBoard::generate_attack_rays(Dir::N);
+    static ref RAYS_NW: AttackPatterns = BitBoard::generate_attack_rays(Dir::NW);
+    static ref RAYS_W: AttackPatterns = BitBoard::generate_attack_rays(Dir::W);
+    static ref RAYS_SW: AttackPatterns = BitBoard::generate_attack_rays(Dir::SW);
+    static ref RAYS_S: AttackPatterns = BitBoard::generate_attack_rays(Dir::S);
+    static ref RAYS_SE: AttackPatterns = BitBoard::generate_attack_rays(Dir::SE);
 }
 
 impl BitBoard {
     const FULL: Self = Self(!0);
-
-    const DIAGONAL_NW: Self = Self(0x8040_2010_0804_0201);
-    const DIAGONAL_NE: Self = Self(0x0081_0204_0810_2040);
 
     const A_FILE: Self = Self(0x8080_8080_8080_8080);
     const B_FILE: Self = Self(0x4040_4040_4040_4040);
@@ -82,6 +54,10 @@ impl BitBoard {
 
     pub const fn set(self, idx: u8) -> Self {
         Self(self.0 | (1 << idx))
+    }
+
+    pub const fn get(self, idx: u8) -> bool {
+        self.0 & (1 << idx) != 0
     }
 
     pub const fn clear(self, idx: u8) -> Self {
@@ -126,6 +102,56 @@ impl BitBoard {
     pub const fn clear_least_significant_set_bit(self) -> Self {
         Self(self.0 & (self.0.wrapping_sub(1)))
     }
+
+    pub const fn clear_most_significant_set_bit(self) -> Self {
+        Self(self.0 & !(1 << (63 - self.0.leading_zeros())))
+    }
+
+    fn generate_attack_ray(position: Position, direction: Coords) -> BitBoard {
+        let mut board = BitBoard::zero();
+        let mut pos = position.to_coords();
+        loop {
+            pos = pos + direction;
+            if !pos.is_in_bounds() {
+                break;
+            }
+            board = board.set(pos.to_pos().0);
+        }
+        board
+    }
+
+    fn generate_attack_rays(direction: Coords) -> AttackPatterns {
+        let mut boards = [BitBoard::zero(); 64];
+        for (i, board) in boards.iter_mut().enumerate() {
+            *board = Self::generate_attack_ray(Position(i as u8), direction);
+        }
+        boards
+    }
+}
+
+impl Not for BitBoard {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        Self(!self.0)
+    }
+}
+
+impl Display for BitBoard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for i in 0..64 {
+            if self.get(i) {
+                f.write_char('1')?;
+            } else {
+                f.write_char('.')?;
+            }
+            f.write_char(' ')?;
+            if i % 8 == 7 {
+                f.write_char('\n')?;
+            }
+        }
+        Ok(())
+    }
 }
 
 struct Pieces([BitBoard; 6]);
@@ -159,14 +185,6 @@ impl IndexMut<ChessColor> for ColorMaps {
     }
 }
 
-impl Not for BitBoard {
-    type Output = Self;
-
-    fn not(self) -> Self::Output {
-        Self(!self.0)
-    }
-}
-
 pub struct Chessboard {
     pieces: Pieces,
     colors: ColorMaps,
@@ -175,6 +193,10 @@ pub struct Chessboard {
 impl Chessboard {
     pub fn get(&self, piece: PieceType, color: ChessColor) -> BitBoard {
         self.pieces[piece].intersection(self.colors[color])
+    }
+
+    fn occupancy(&self) -> BitBoard {
+        self.colors[ChessColor::White].union(self.colors[ChessColor::Black])
     }
 
     fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError> {
@@ -224,10 +246,16 @@ impl Chessboard {
 
     fn add_moves(moves: &mut Vec<Move>, offset: Coords, positions: &[Position]) {
         for pos in positions {
-            let origin_pos = pos
+            let origin = pos
                 .translate_by_coords(-offset)
                 .expect("`add_moves` assumes no horizontal wrapping");
-            moves.push(Move(origin_pos, *pos));
+            moves.push(Move(origin, *pos));
+        }
+    }
+
+    fn add_moves_with_origin(moves: &mut Vec<Move>, origin: Position, positions: &[Position]) {
+        for pos in positions {
+            moves.push(Move(origin, *pos));
         }
     }
 
@@ -236,8 +264,8 @@ impl Chessboard {
         let opposing_pieces = self.colors[!color];
 
         let (rank_offset, double_move_mask) = match color {
-            ChessColor::White => (1, BitBoard::RANK_2),
-            ChessColor::Black => (-1, BitBoard::RANK_7),
+            ChessColor::White => (Dir::N_OFFSET, BitBoard::RANK_2),
+            ChessColor::Black => (Dir::S_OFFSET, BitBoard::RANK_7),
         };
 
         // We cannot move into any other pieces (except when capturing)
@@ -254,22 +282,22 @@ impl Chessboard {
             .intersection(double_move_mask.translated(2 * offset_dir));
         Self::add_moves(moves, 2 * offset_dir, &move_two_tiles.serialized());
 
-        let capture_offset = Coords::new(-1, rank_offset);
-        let left_captures = pieces
-            // Filter out pawns which will wrap horizontally
+        let capture_offset = Coords::new(Dir::W_OFFSET, rank_offset);
+        let west_captures = pieces
+            // Filter out pawns which would wrap horizontally
             .intersection(!BitBoard::A_FILE)
             .translated(capture_offset)
             // We can only capture on squares with an opposing piece
             .intersection(opposing_pieces);
-        Self::add_moves(moves, capture_offset, &left_captures.serialized());
+        Self::add_moves(moves, capture_offset, &west_captures.serialized());
 
         // Same reasoning as above
-        let capture_offset = Coords::new(1, rank_offset);
-        let right_captures = pieces
+        let capture_offset = Coords::new(Dir::E_OFFSET, rank_offset);
+        let east_captures = pieces
             .intersection(!BitBoard::H_FILE)
             .translated(capture_offset)
             .intersection(opposing_pieces);
-        Self::add_moves(moves, capture_offset, &right_captures.serialized());
+        Self::add_moves(moves, capture_offset, &east_captures.serialized());
     }
 
     fn generate_knight_moves(&self, moves: &mut Vec<Move>, pieces: BitBoard, color: ChessColor) {
@@ -294,34 +322,105 @@ impl Chessboard {
         }
     }
 
+    fn generate_sliding_attack_board(
+        &self,
+        rays: &[BitBoard],
+        is_positive_direction: bool,
+    ) -> BitBoard {
+        let occupancy = self.occupancy();
+
+        let mut possible_moves = BitBoard::zero();
+        for ray_pattern in rays {
+            let blockers = ray_pattern.intersection(occupancy);
+            let blockers_past_first = if is_positive_direction {
+                blockers.clear_least_significant_set_bit()
+            } else {
+                blockers.clear_most_significant_set_bit()
+            };
+            possible_moves = possible_moves.union(ray_pattern.intersection(!blockers_past_first));
+        }
+        possible_moves
+    }
+
+    fn generate_sliding_moves(
+        &self,
+        moves: &mut Vec<Move>,
+        pieces: BitBoard,
+        color: ChessColor,
+        attack_patterns: &[&AttackPatterns],
+        is_positive_direction: bool,
+    ) {
+        let valid_tiles = !self.colors[color];
+        for piece in pieces.serialized() {
+            let rays = attack_patterns
+                .iter()
+                .map(|rays| rays[piece])
+                .collect::<Vec<_>>();
+            let attack_board =
+                self.generate_sliding_attack_board(rays.as_slice(), is_positive_direction);
+            let possible_moves = attack_board.intersection(valid_tiles);
+            Self::add_moves_with_origin(moves, piece, &possible_moves.serialized());
+        }
+    }
+
     fn generate_bishop_moves(&self, moves: &mut Vec<Move>, pieces: BitBoard, color: ChessColor) {
-        todo!()
+        self.generate_sliding_moves(
+            moves,
+            pieces,
+            color,
+            [RAYS_NE.deref(), RAYS_NW.deref()].as_slice(),
+            true,
+        );
+        self.generate_sliding_moves(
+            moves,
+            pieces,
+            color,
+            [RAYS_SE.deref(), RAYS_SW.deref()].as_slice(),
+            false,
+        );
     }
 
     fn generate_rook_moves(&self, moves: &mut Vec<Move>, pieces: BitBoard, color: ChessColor) {
-        todo!()
+        self.generate_sliding_moves(
+            moves,
+            pieces,
+            color,
+            [RAYS_N.deref(), RAYS_E.deref()].as_slice(),
+            true,
+        );
+        self.generate_sliding_moves(
+            moves,
+            pieces,
+            color,
+            [RAYS_S.deref(), RAYS_W.deref()].as_slice(),
+            false,
+        );
     }
 
     fn generate_queen_moves(&self, moves: &mut Vec<Move>, pieces: BitBoard, color: ChessColor) {
-        todo!()
+        self.generate_bishop_moves(moves, pieces, color);
+        self.generate_rook_moves(moves, pieces, color);
     }
 
     fn generate_king_moves(&self, moves: &mut Vec<Move>, piece: BitBoard, color: ChessColor) {
         // We cannot move to or capture our own pieces
         let valid_tiles = !self.colors[color];
 
-        for offset in [Coords::CARDINAL_OFFSETS, Coords::DIAGONAL_OFFSETS].concat() {
+        for offset in [Dir::CARDINAL, Dir::DIAGONAL].concat() {
             // Filter out moves which will go OOB horisontally (we don't have to worry about vertical
             // OOB as they will be shifted away)
             let mask = match offset.file {
-                -1 => !BitBoard::A_FILE,
-                1 => !BitBoard::H_FILE,
+                Dir::W_OFFSET => !BitBoard::A_FILE,
+                Dir::E_OFFSET => !BitBoard::H_FILE,
                 _ => BitBoard::FULL,
             };
             let possible_moves = piece
                 .intersection(mask)
                 .translated(offset)
                 .intersection(valid_tiles);
+
+            // TODO: Filter moves which put king in check
+
             Self::add_moves(moves, offset, &possible_moves.serialized());
         }
     }
