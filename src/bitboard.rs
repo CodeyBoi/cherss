@@ -218,7 +218,7 @@ impl Chessboard {
     fn make_move(&mut self, Move(from, to): Move) -> Result<(), ChessMoveError> {
         let piece = self.piece_at(from).ok_or(ChessMoveError::MissingPiece)?;
         let mut legal_moves = Vec::new();
-        self.generate_moves(&mut legal_moves, piece.piece, piece.color);
+        self.generate_moves_by_piece(&mut legal_moves, piece.piece, piece.color);
 
         if !legal_moves.iter().any(|&Move(f, t)| f == from && t == to) {
             return Err(ChessMoveError::IllegalMove);
@@ -254,27 +254,45 @@ impl Chessboard {
         }
     }
 
-    fn generate_moves(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor) {
+    fn generate_moves_from(&self, moves: &mut Vec<Move>, origin: Position) {
+        let Piece { color, piece } = match self.piece_at(origin) {
+            Some(p) => p,
+            None => return,
+        };
+        self._generate_moves(moves, piece, color, origin.to_mask());
+    }
+
+    fn generate_moves_by_piece(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor) {
+        let piece_map = self.get(piece, color);
+        self._generate_moves(moves, piece, color, piece_map);
+    }
+
+    fn _generate_moves(
+        &self,
+        moves: &mut Vec<Move>,
+        piece: PieceType,
+        color: ChessColor,
+        piece_map: BitBoard,
+    ) {
         use PieceType as P;
-        let pieces = self.get(piece, color);
         match piece {
             P::Pawn => {
-                self.generate_pawn_moves(moves, pieces, color);
+                self.generate_pawn_moves(moves, piece_map, color);
             }
             P::Knight => {
-                self.generate_knight_moves(moves, pieces, color);
+                self.generate_knight_moves(moves, piece_map, color);
             }
             P::Bishop => {
-                self.generate_bishop_moves(moves, pieces, color);
+                self.generate_bishop_moves(moves, piece_map, color);
             }
             P::Rook => {
-                self.generate_rook_moves(moves, pieces, color);
+                self.generate_rook_moves(moves, piece_map, color);
             }
             P::Queen => {
-                self.generate_queen_moves(moves, pieces, color);
+                self.generate_queen_moves(moves, piece_map, color);
             }
             P::King => {
-                self.generate_king_moves(moves, pieces, color);
+                self.generate_king_moves(moves, piece_map, color);
             }
         };
     }
@@ -495,7 +513,11 @@ impl Chess for Chessboard {
         self.make_move(chess_move)
     }
 
-    fn generate_moves(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor) {
-        self.generate_moves(moves, piece, color);
+    fn generate_moves_from(&self, moves: &mut Vec<Move>, origin: Position) {
+        self.generate_moves_from(moves, origin);
+    }
+
+    fn generate_moves_by_piece(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor) {
+        self.generate_moves_by_piece(moves, piece, color);
     }
 }

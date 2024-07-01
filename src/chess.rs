@@ -201,5 +201,6 @@ pub enum ChessMoveError {
 
 pub trait Chess {
     fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError>;
-    fn generate_moves(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor);
+    fn generate_moves_from(&self, moves: &mut Vec<Move>, pos: Position);
+    fn generate_moves_by_piece(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor);
 }
