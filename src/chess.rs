@@ -5,7 +5,9 @@ use std::{
 
 use crate::{
     bitboard::BitBoard,
-    piece::{ChessColor, PieceType},
+    chessboard::ChessResult,
+    piece::{ChessColor, Piece, PieceType},
+    player::Player,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -185,7 +187,7 @@ pub enum ParseMoveError {
 impl Move {
     fn from_uci(uci: &str) -> Result<Self, ParseMoveError> {
         let from = Position::from_uci(&uci[0..2])?;
-        let to = Position::from_uci(&uci[0..2])?;
+        let to = Position::from_uci(&uci[2..4])?;
         Ok(Move(from, to))
     }
 }
@@ -201,6 +203,10 @@ pub enum ChessMoveError {
 
 pub trait Chess {
     fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError>;
-    fn generate_moves_from(&self, moves: &mut Vec<Move>, pos: Position);
-    fn generate_moves_by_piece(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor);
+    fn piece_at(&self, pos: Position) -> Option<Piece>;
+    fn moves_from(&self, pos: Position) -> Vec<Move>;
+    fn moves_by_piece(&self, piece: PieceType, color: ChessColor) -> Vec<Move>;
+    fn game_result(&self) -> ChessResult;
+    fn current_turn(&self) -> ChessColor;
+    fn current_player(&self) -> Player;
 }

@@ -249,10 +249,6 @@ impl Chessboard {
         fen
     }
 
-    pub fn into_game(self) -> ChessGame {
-        ChessGame::new(self)
-    }
-
     pub fn make_move(&mut self, from: Coords, to: Coords) -> Result<(), ChessMoveError> {
         if self.result != ChessResult::Undecided {
             return Err(ChessMoveError::GameHasEnded);

@@ -1,5 +1,5 @@
 use crate::{
-    chess::Coords,
+    chess::{Chess, Coords, Move, Position},
     chessboard::ChessResult,
     player::Player,
     tui::{Tile, TileStatus},
@@ -19,8 +19,8 @@ use crate::{
 };
 
 pub struct ChessGame {
-    board: Chessboard,
-    active_tile: Option<Coords>,
+    board: Box<dyn Chess>,
+    active_tile: Option<Position>,
     pub bots_active: bool,
     pub is_running: bool,
     pub tile_size: u16,
@@ -43,17 +43,16 @@ impl Widget for &mut ChessGame {
 
         let mut is_movable = [false; SIZE * SIZE];
         if let Some(active_tile) = self.active_tile {
-            for pos in self.board.moves(active_tile) {
-                let idx = (pos.file * SIZE as i8 + pos.rank) as usize;
-                is_movable[idx] = true;
+            for Move(_, to) in self.board.moves_from(active_tile) {
+                is_movable[to.0 as usize] = true;
             }
         }
 
         for (i, (tile_area, &is_movable)) in tiles.iter().zip(is_movable.iter()).enumerate() {
-            let pos = Coords::new((i / SIZE) as i8, (i % SIZE) as i8);
-            let piece = self.board.at(pos);
+            let pos = Position(i as u8);
+            let piece = self.board.piece_at(pos);
             let status = if is_movable {
-                if self.board.at(pos).is_some() {
+                if self.board.piece_at(pos).is_some() {
                     TileStatus::CanCaptureAt
                 } else {
                     TileStatus::CanMoveTo
@@ -63,7 +62,7 @@ impl Widget for &mut ChessGame {
             } else {
                 TileStatus::Default
             };
-            let color = if (i + pos.file as usize) % 2 == 0 {
+            let color = if (i + i / 8) % 2 == 0 {
                 ChessColor::Black
             } else {
                 ChessColor::White
@@ -79,7 +78,7 @@ impl Widget for &mut ChessGame {
 }
 
 impl ChessGame {
-    pub fn new(board: Chessboard) -> Self {
+    pub fn new(board: Box<dyn Chess>) -> Self {
         Self {
             board,
             active_tile: None,
@@ -276,11 +275,11 @@ impl ChessGame {
 
     pub fn make_bot_move(&mut self) {
         if let Player::Bot(strat) = self.board.current_player() {
-            if let Some((from, to)) = strat.choose_move(&mut self.board) {
-                self.board
-                    .make_move(from, to)
-                    .expect("bot should't be able to choose an invalid move");
-            }
+            // if let Some((from, to)) = strat.choose_move(&mut self.board) {
+            //     self.board
+            //         .make_move(Move(from.to_pos(), to.to_pos()))
+            //         .expect("bot should't be able to choose an invalid move");
+            // }
         }
     }
 
@@ -320,15 +319,6 @@ impl ChessGame {
 
     pub fn _sdl_handle_keypress(&mut self, keycode: Keycode) {
         match keycode {
-            Keycode::U => {
-                self.active_tile = None;
-                self.board.undo();
-                self.board.undo();
-            }
-            Keycode::R => {
-                self.board = Chessboard::default();
-                self.active_tile = None;
-            }
             Keycode::B => {
                 self.bots_active = !self.bots_active;
             }

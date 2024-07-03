@@ -8,6 +8,7 @@ use lazy_static::lazy_static;
 use crate::{
     chess::{Chess, ChessMoveError, Coords, Dir, Move, Position},
     piece::{ChessColor, Piece, PieceType, PIECE_TYPES},
+    player::Player,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -513,11 +514,31 @@ impl Chess for Chessboard {
         self.make_move(chess_move)
     }
 
-    fn generate_moves_from(&self, moves: &mut Vec<Move>, origin: Position) {
-        self.generate_moves_from(moves, origin);
+    fn moves_from(&self, origin: Position) -> Vec<Move> {
+        let mut moves = Vec::new();
+        self.generate_moves_from(&mut moves, origin);
+        moves
     }
 
-    fn generate_moves_by_piece(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor) {
-        self.generate_moves_by_piece(moves, piece, color);
+    fn moves_by_piece(&self, piece: PieceType, color: ChessColor) -> Vec<Move> {
+        let mut moves = Vec::new();
+        self.generate_moves_by_piece(&mut moves, piece, color);
+        moves
+    }
+
+    fn piece_at(&self, pos: Position) -> Option<Piece> {
+        self.piece_at(pos)
+    }
+
+    fn game_result(&self) -> crate::chessboard::ChessResult {
+        todo!()
+    }
+
+    fn current_turn(&self) -> ChessColor {
+        todo!()
+    }
+
+    fn current_player(&self) -> Player {
+        todo!()
     }
 }
