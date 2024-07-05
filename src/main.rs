@@ -16,11 +16,7 @@ mod player;
 mod tui;
 
 fn main() {
-    let chess = bitboard::Chessboard::with_players(
-        Player::Bot(BotStrategy::Random),
-        Player::Bot(BotStrategy::Random),
-    )
-    .into_game();
+    let chess = bitboard::Chessboard::with_players(Player::Human, Player::Human).into_game();
 
     let _ = chessboard::Chessboard::default();
 

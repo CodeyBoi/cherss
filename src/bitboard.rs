@@ -256,14 +256,6 @@ impl Chessboard {
         }
     }
 
-    fn generate_moves_from(&self, moves: &mut Vec<Move>, origin: Position) {
-        let Piece { color, piece } = match self.piece_at(origin) {
-            Some(p) => p,
-            None => return,
-        };
-        self.generate_moves(moves, piece, color, origin.to_mask());
-    }
-
     fn generate_moves_by_piece(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor) {
         let piece_map = self.get(piece, color);
         self.generate_moves(moves, piece, color, piece_map);
@@ -537,7 +529,9 @@ impl Chess for Chessboard {
             Some(p) => p,
             None => return moves,
         };
-        self.generate_moves(&mut moves, piece, color, origin.to_mask());
+        if origin.is_in_bounds() {
+            self.generate_moves(&mut moves, piece, color, origin.to_mask());
+        }
         moves
     }
 
@@ -558,6 +552,10 @@ impl Chess for Chessboard {
     }
 
     fn piece_at(&self, pos: Position) -> Option<Piece> {
+        if !pos.is_in_bounds() {
+            return None;
+        }
+
         let mask = pos.to_mask();
         let color = if self.colors[ChessColor::White].intersection(mask).0 != 0 {
             ChessColor::White

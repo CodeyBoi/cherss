@@ -28,6 +28,7 @@ impl Widget for &mut ChessGame {
         let rows = Layout::vertical([Constraint::Length(self.tile_size / 2); SIZE]).split(area);
         let tiles = rows
             .iter()
+            .rev()
             .flat_map(|row| {
                 Layout::horizontal([Constraint::Length(self.tile_size); SIZE])
                     .split(*row)
@@ -137,9 +138,12 @@ impl ChessGame {
     pub fn make_bot_move(&mut self) {
         if let Player::Bot(strat) = self.board.current_player() {
             if let Some(Move(from, to)) = strat.choose_move(&self.board) {
-                self.board
-                    .make_move(Move(from, to))
-                    .expect("bot should't be able to choose an invalid move");
+                if let Err(e) = self.board.make_move(Move(from, to)) {
+                    println!(
+                        "error: bot tried making illegal move {}->{}: {:?}",
+                        from, to, e,
+                    );
+                }
             }
         }
     }
@@ -151,16 +155,6 @@ impl ChessGame {
         if let Some(last_interact) = self.active_tile {
             // If move is successful, reset active tile
             if self.board.make_move(Move(last_interact, pos)).is_ok() {
-                if let Player::Bot(strat) = self.board.current_player() {
-                    if let Some(Move(from, to)) = strat.choose_move(&self.board) {
-                        if let Err(e) = self.board.make_move(Move(from, to)) {
-                            println!(
-                                "error: bot tried making illegal move {}->{}: {:?}",
-                                from, to, e,
-                            );
-                        }
-                    }
-                }
                 self.active_tile = None;
                 return;
             }

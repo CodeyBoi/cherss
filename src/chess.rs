@@ -6,7 +6,7 @@ use std::{
 use crate::{
     bitboard::BitBoard,
     chessboard::ChessResult,
-    piece::{ChessColor, Piece, PieceType},
+    piece::{ChessColor, Piece, PieceType, PIECE_TYPES},
     player::Player,
 };
 
@@ -27,7 +27,13 @@ pub trait Chess {
     fn piece_at(&self, pos: Position) -> Option<Piece>;
     fn moves_from(&self, pos: Position) -> Vec<Move>;
     fn moves_by_piece(&self, piece: PieceType, color: ChessColor) -> Vec<Move>;
-    fn all_moves(&self) -> Vec<Move>;
+    fn all_moves(&self) -> Vec<Move> {
+        let color = self.current_turn();
+        PIECE_TYPES
+            .iter()
+            .flat_map(|&p| self.moves_by_piece(p, color))
+            .collect::<Vec<_>>()
+    }
     fn game_result(&self) -> ChessResult;
     fn current_turn(&self) -> ChessColor;
     fn current_player(&self) -> Player;
