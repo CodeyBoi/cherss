@@ -22,6 +22,19 @@ pub struct Coords {
     pub rank: i8,
 }
 
+pub trait Chess {
+    fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError>;
+    fn piece_at(&self, pos: Position) -> Option<Piece>;
+    fn moves_from(&self, pos: Position) -> Vec<Move>;
+    fn moves_by_piece(&self, piece: PieceType, color: ChessColor) -> Vec<Move>;
+    fn all_moves(&self) -> Vec<Move>;
+    fn game_result(&self) -> ChessResult;
+    fn current_turn(&self) -> ChessColor;
+    fn current_player(&self) -> Player;
+    fn history(&self) -> &[Move];
+    fn undo(&mut self);
+}
+
 impl Position {
     pub const fn file(self) -> u8 {
         self.0 % 8
@@ -77,6 +90,20 @@ impl Position {
 
     pub fn to_mask(self) -> BitBoard {
         BitBoard(1 << self.0)
+    }
+
+    pub fn tile_color(&self) -> ChessColor {
+        if (self.0 + self.0 / 8) % 2 == 0 {
+            ChessColor::Black
+        } else {
+            ChessColor::White
+        }
+    }
+}
+
+impl Display for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!("{}", self.to_coords()))
     }
 }
 
@@ -199,14 +226,4 @@ pub enum ChessMoveError {
     SameColorCapture,
     IllegalMove,
     GameHasEnded,
-}
-
-pub trait Chess {
-    fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError>;
-    fn piece_at(&self, pos: Position) -> Option<Piece>;
-    fn moves_from(&self, pos: Position) -> Vec<Move>;
-    fn moves_by_piece(&self, piece: PieceType, color: ChessColor) -> Vec<Move>;
-    fn game_result(&self) -> ChessResult;
-    fn current_turn(&self) -> ChessColor;
-    fn current_player(&self) -> Player;
 }

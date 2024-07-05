@@ -1,4 +1,9 @@
-use bitboard::Chessboard;
+use std::io::stdout;
+
+use crossterm::{
+    execute,
+    terminal::{disable_raw_mode, LeaveAlternateScreen},
+};
 use player::{BotStrategy, Player};
 use tui::App;
 
@@ -8,17 +13,20 @@ mod chessboard;
 mod chessgame;
 mod piece;
 mod player;
-mod sdl;
 mod tui;
 
 fn main() {
-    let chess = chessboard::Chessboard::with_players(
+    let chess = bitboard::Chessboard::with_players(
         Player::Bot(BotStrategy::Random),
         Player::Bot(BotStrategy::Random),
     )
     .into_game();
 
-    let _ = Chessboard::default();
+    let _ = chessboard::Chessboard::default();
 
-    App::run(chess).unwrap();
+    if let Err(e) = App::run(chess) {
+        disable_raw_mode().unwrap();
+        execute!(stdout(), LeaveAlternateScreen).unwrap();
+        println!("{}", e);
+    }
 }

@@ -7,6 +7,8 @@ use lazy_static::lazy_static;
 
 use crate::{
     chess::{Chess, ChessMoveError, Coords, Dir, Move, Position},
+    chessboard::ChessResult,
+    chessgame::ChessGame,
     piece::{ChessColor, Piece, PieceType, PIECE_TYPES},
     player::Player,
 };
@@ -188,6 +190,11 @@ impl IndexMut<ChessColor> for ColorMaps {
 pub struct Chessboard {
     pieces: Pieces,
     colors: ColorMaps,
+    history: Vec<Move>,
+    result: ChessResult,
+    white_player: Player,
+    black_player: Player,
+    current_turn: ChessColor,
 }
 
 impl Chessboard {
@@ -195,21 +202,16 @@ impl Chessboard {
         self.pieces[piece].intersection(self.colors[color])
     }
 
-    pub fn piece_at(&self, pos: Position) -> Option<Piece> {
-        let mask = pos.to_mask();
-        let color = if self.colors[ChessColor::White].intersection(mask).0 != 0 {
-            ChessColor::White
-        } else if self.colors[ChessColor::Black].intersection(mask).0 != 0 {
-            ChessColor::Black
-        } else {
-            return None;
-        };
+    pub fn with_players(white_player: Player, black_player: Player) -> Self {
+        Self {
+            white_player,
+            black_player,
+            ..Default::default()
+        }
+    }
 
-        let piece = PIECE_TYPES
-            .iter()
-            .find(|&&piece| self.pieces[piece].intersection(mask).0 != 0)?;
-
-        Some(Piece::new(color, *piece))
+    pub fn into_game(self) -> ChessGame {
+        ChessGame::new(Box::new(self))
     }
 
     fn occupancy(&self) -> BitBoard {
@@ -217,9 +219,8 @@ impl Chessboard {
     }
 
     fn make_move(&mut self, Move(from, to): Move) -> Result<(), ChessMoveError> {
-        let piece = self.piece_at(from).ok_or(ChessMoveError::MissingPiece)?;
-        let mut legal_moves = Vec::new();
-        self.generate_moves_by_piece(&mut legal_moves, piece.piece, piece.color);
+        let Piece { color, piece } = self.piece_at(from).ok_or(ChessMoveError::MissingPiece)?;
+        let legal_moves = self.moves_by_piece(piece, color);
 
         if !legal_moves.iter().any(|&Move(f, t)| f == from && t == to) {
             return Err(ChessMoveError::IllegalMove);
@@ -260,15 +261,15 @@ impl Chessboard {
             Some(p) => p,
             None => return,
         };
-        self._generate_moves(moves, piece, color, origin.to_mask());
+        self.generate_moves(moves, piece, color, origin.to_mask());
     }
 
     fn generate_moves_by_piece(&self, moves: &mut Vec<Move>, piece: PieceType, color: ChessColor) {
         let piece_map = self.get(piece, color);
-        self._generate_moves(moves, piece, color, piece_map);
+        self.generate_moves(moves, piece, color, piece_map);
     }
 
-    fn _generate_moves(
+    fn generate_moves(
         &self,
         moves: &mut Vec<Move>,
         piece: PieceType,
@@ -493,52 +494,107 @@ impl Default for Chessboard {
         const WHITE: B = B::RANK_1.union(B::RANK_2);
         const BLACK: B = B::RANK_7.union(B::RANK_8);
 
-        let mut pieces = Pieces([BitBoard::zero(); 6]);
-        pieces[PieceType::Pawn] = PAWNS;
-        pieces[PieceType::Knight] = KNIGHTS;
-        pieces[PieceType::Bishop] = BISHOPS;
-        pieces[PieceType::Rook] = ROOKS;
-        pieces[PieceType::Queen] = QUEENS;
-        pieces[PieceType::King] = KINGS;
+        let pieces = {
+            let mut p = Pieces([BitBoard::zero(); 6]);
+            p[PieceType::Pawn] = PAWNS;
+            p[PieceType::Knight] = KNIGHTS;
+            p[PieceType::Bishop] = BISHOPS;
+            p[PieceType::Rook] = ROOKS;
+            p[PieceType::Queen] = QUEENS;
+            p[PieceType::King] = KINGS;
+            p
+        };
 
-        let mut colors = ColorMaps([BitBoard::zero(); 2]);
-        colors[ChessColor::White] = WHITE;
-        colors[ChessColor::Black] = BLACK;
+        let colors = {
+            let mut c = ColorMaps([BitBoard::zero(); 2]);
+            c[ChessColor::White] = WHITE;
+            c[ChessColor::Black] = BLACK;
+            c
+        };
 
-        Self { pieces, colors }
+        Self {
+            pieces,
+            colors,
+            history: Vec::new(),
+            result: ChessResult::Undecided,
+            white_player: Player::Human,
+            black_player: Player::Bot(crate::player::BotStrategy::Random),
+            current_turn: ChessColor::White,
+        }
     }
 }
 
 impl Chess for Chessboard {
     fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError> {
-        self.make_move(chess_move)
+        let ret = self.make_move(chess_move);
+        self.current_turn = !self.current_turn;
+        ret
     }
 
     fn moves_from(&self, origin: Position) -> Vec<Move> {
         let mut moves = Vec::new();
-        self.generate_moves_from(&mut moves, origin);
+        let Piece { color, piece } = match self.piece_at(origin) {
+            Some(p) => p,
+            None => return moves,
+        };
+        self.generate_moves(&mut moves, piece, color, origin.to_mask());
         moves
     }
 
     fn moves_by_piece(&self, piece: PieceType, color: ChessColor) -> Vec<Move> {
         let mut moves = Vec::new();
-        self.generate_moves_by_piece(&mut moves, piece, color);
+        let piece_map = self.get(piece, color);
+        self.generate_moves(&mut moves, piece, color, piece_map);
+        moves
+    }
+
+    fn all_moves(&self) -> Vec<Move> {
+        let color = self.current_turn();
+        let mut moves = Vec::new();
+        for piece in PIECE_TYPES {
+            self.generate_moves_by_piece(&mut moves, piece, color);
+        }
         moves
     }
 
     fn piece_at(&self, pos: Position) -> Option<Piece> {
-        self.piece_at(pos)
+        let mask = pos.to_mask();
+        let color = if self.colors[ChessColor::White].intersection(mask).0 != 0 {
+            ChessColor::White
+        } else if self.colors[ChessColor::Black].intersection(mask).0 != 0 {
+            ChessColor::Black
+        } else {
+            return None;
+        };
+
+        let piece = PIECE_TYPES
+            .iter()
+            .find(|&&piece| self.pieces[piece].intersection(mask).0 != 0)?;
+
+        Some(Piece::new(color, *piece))
     }
 
-    fn game_result(&self) -> crate::chessboard::ChessResult {
-        todo!()
+    fn game_result(&self) -> ChessResult {
+        self.result
     }
 
     fn current_turn(&self) -> ChessColor {
-        todo!()
+        self.current_turn
     }
 
     fn current_player(&self) -> Player {
+        if self.current_turn() == ChessColor::White {
+            self.white_player
+        } else {
+            self.black_player
+        }
+    }
+
+    fn history(&self) -> &[Move] {
+        self.history.as_slice()
+    }
+
+    fn undo(&mut self) {
         todo!()
     }
 }
