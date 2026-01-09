@@ -7,6 +7,7 @@ use crate::{
 use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     layout::{Constraint, Layout, Rect},
+    style::{Style, Stylize},
     widgets::Widget,
 };
 
@@ -39,8 +40,8 @@ impl Widget for &mut ChessGame {
         let is_movable = {
             let mut m = [false; SIZE * SIZE];
             if let Some(active_tile) = self.active_tile {
-                for Move(_, to) in self.board.moves_from(active_tile) {
-                    m[to.0 as usize] = true;
+                for Position(to) in self.board.moves_from(active_tile) {
+                    m[to as usize] = true;
                 }
             }
             m
@@ -66,6 +67,13 @@ impl Widget for &mut ChessGame {
                 status,
                 color,
             };
+
+            buf.set_string(
+                tile_area.x,
+                tile_area.y,
+                format!("{} ({})", pos.0, pos),
+                Style::new().black(),
+            );
             tile.render(*tile_area, buf);
         }
     }
@@ -155,6 +163,7 @@ impl ChessGame {
         if let Some(last_interact) = self.active_tile {
             // If move is successful, reset active tile
             if self.board.make_move(Move(last_interact, pos)).is_ok() {
+                println!("Move made!");
                 self.active_tile = None;
                 return;
             }

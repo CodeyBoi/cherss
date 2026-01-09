@@ -255,7 +255,7 @@ impl Chessboard {
         }
 
         let legal_moves = self.moves(from);
-        if !legal_moves.iter().any(|m| *m == to) {
+        if !legal_moves.contains(&to) {
             return Err(ChessMoveError::IllegalMove);
         }
         self.move_piece(from, to)?;

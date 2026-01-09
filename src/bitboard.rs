@@ -1,3 +1,4 @@
+use core::fmt;
 use std::{
     fmt::{Display, Write},
     ops::{Deref, Index, IndexMut, Not},
@@ -26,6 +27,20 @@ impl Index<Position> for AttackPatterns {
     }
 }
 
+impl Deref for BitBoard {
+    type Target = u64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl fmt::Debug for BitBoard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt::Display::fmt(&self, f)
+    }
+}
+
 lazy_static! {
     static ref RAYS_E: AttackPatterns = BitBoard::generate_attack_rays(Dir::E);
     static ref RAYS_NE: AttackPatterns = BitBoard::generate_attack_rays(Dir::NE);
@@ -40,15 +55,15 @@ lazy_static! {
 impl BitBoard {
     const FULL: Self = Self(!0);
 
-    const A_FILE: Self = Self(0x8080_8080_8080_8080);
-    const B_FILE: Self = Self(0x4040_4040_4040_4040);
-    const G_FILE: Self = Self(0x0202_0202_0202_0202);
-    const H_FILE: Self = Self(0x0101_0101_0101_0101);
+    const FILE_A: Self = Self(0x0101_0101_0101_0101);
+    const FILE_B: Self = Self(0x0202_0202_0202_0202);
+    const FILE_G: Self = Self(0x4040_4040_4040_4040);
+    const FILE_H: Self = Self(0x8080_8080_8080_8080);
 
-    const RANK_1: Self = Self(0xff00_0000_0000_0000);
-    const RANK_2: Self = Self(0x00ff_0000_0000_0000);
-    const RANK_7: Self = Self(0x0000_0000_0000_ff00);
-    const RANK_8: Self = Self(0x0000_0000_0000_00ff);
+    const RANK_1: Self = Self(0x0000_0000_0000_00ff);
+    const RANK_2: Self = Self(0x0000_0000_0000_ff00);
+    const RANK_7: Self = Self(0x00ff_0000_0000_0000);
+    const RANK_8: Self = Self(0xff00_0000_0000_0000);
 
     pub const fn zero() -> Self {
         Self(0)
@@ -88,12 +103,23 @@ impl BitBoard {
         v
     }
 
-    pub const fn translated(self, offset: Coords) -> Self {
+    pub fn translated(self, offset: Coords) -> Self {
+        // Filter out cells which would wrap horizontally
+        let mask = {
+            let cols = (0..offset.file.abs()).fold(Self::zero(), |acc, i| {
+                acc.union(BitBoard(Self::FILE_A.0 << i))
+            });
+            if offset.file > 0 {
+                !BitBoard(cols.0 << (8 - offset.file))
+            } else {
+                !cols
+            }
+        };
         let shift_offset = offset.rank * 8 + offset.file;
         if shift_offset > 0 {
-            Self(self.0 >> shift_offset)
+            Self(self.intersection(mask).0 << shift_offset)
         } else {
-            Self(self.0 << -shift_offset)
+            Self(self.intersection(mask).0 >> -shift_offset)
         }
     }
 
@@ -129,6 +155,10 @@ impl BitBoard {
         }
         boards
     }
+
+    fn from_pos_list(cells: &[Position]) -> Self {
+        cells.iter().fold(Self::zero(), |acc, pos| acc.set(pos.0))
+    }
 }
 
 impl Not for BitBoard {
@@ -141,16 +171,17 @@ impl Not for BitBoard {
 
 impl Display for BitBoard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for i in 0..64 {
-            if self.get(i) {
-                f.write_char('1')?;
-            } else {
-                f.write_char('.')?;
+        f.write_char('\n')?;
+        for rank in (0..8).rev() {
+            for file in 0..8 {
+                if self.get(rank * 8 + file) {
+                    f.write_char('X')?;
+                } else {
+                    f.write_char('·')?;
+                }
+                f.write_char(' ')?;
             }
-            f.write_char(' ')?;
-            if i % 8 == 7 {
-                f.write_char('\n')?;
-            }
+            f.write_char('\n')?;
         }
         Ok(())
     }
@@ -158,6 +189,18 @@ impl Display for BitBoard {
 
 struct Pieces([BitBoard; 6]);
 struct ColorMaps([BitBoard; 2]);
+
+impl Pieces {
+    pub fn new() -> Self {
+        Self([BitBoard::zero(); 6])
+    }
+}
+
+impl ColorMaps {
+    pub fn new() -> Self {
+        Self([BitBoard::zero(); 2])
+    }
+}
 
 impl Index<PieceType> for Pieces {
     type Output = BitBoard;
@@ -210,6 +253,22 @@ impl Chessboard {
         }
     }
 
+    pub fn with_pieces(initial_pieces: &[(Position, Piece)]) -> Self {
+        let mut colors = ColorMaps::new();
+        let mut pieces = Pieces::new();
+
+        for (position, piece) in initial_pieces {
+            colors[piece.color] = colors[piece.color].set(position.0);
+            pieces[piece.piece] = pieces[piece.piece].set(position.0);
+        }
+
+        Self {
+            pieces,
+            colors,
+            ..Default::default()
+        }
+    }
+
     pub fn into_game(self) -> ChessGame {
         ChessGame::new(Box::new(self))
     }
@@ -218,9 +277,18 @@ impl Chessboard {
         self.colors[ChessColor::White].union(self.colors[ChessColor::Black])
     }
 
-    fn make_move(&mut self, Move(from, to): Move) -> Result<(), ChessMoveError> {
+    pub fn make_move(&mut self, Move(from, to): Move) -> Result<(), ChessMoveError> {
         let Piece { color, piece } = self.piece_at(from).ok_or(ChessMoveError::MissingPiece)?;
+
         let legal_moves = self.moves_by_piece(piece, color);
+        eprintln!(
+            "[{}]",
+            legal_moves
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
 
         if !legal_moves.iter().any(|&Move(f, t)| f == from && t == to) {
             return Err(ChessMoveError::IllegalMove);
@@ -293,6 +361,15 @@ impl Chessboard {
 
     fn add_moves(moves: &mut Vec<Move>, offset: Coords, positions: &[Position]) {
         for pos in positions {
+            eprintln!(
+                "offset: {:?}, [{}]",
+                offset,
+                positions
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
             let origin = pos
                 .translate_by_coords(-offset)
                 .expect("`add_moves` assumes no horizontal wrapping");
@@ -316,7 +393,7 @@ impl Chessboard {
         };
 
         // We cannot move into any other pieces (except when capturing)
-        let valid_moves = !self.colors[color].union(opposing_pieces);
+        let valid_moves = !self.occupancy();
         let offset_dir = Coords::new(0, rank_offset);
         let move_one_tile = pieces.translated(offset_dir).intersection(valid_moves);
         Self::add_moves(moves, offset_dir, &move_one_tile.serialized());
@@ -332,7 +409,7 @@ impl Chessboard {
         let capture_offset = Coords::new(Dir::W_OFFSET, rank_offset);
         let west_captures = pieces
             // Filter out pawns which would wrap horizontally
-            .intersection(!BitBoard::A_FILE)
+            .intersection(!BitBoard::FILE_A)
             .translated(capture_offset)
             // We can only capture on squares with an opposing piece
             .intersection(opposing_pieces);
@@ -341,7 +418,7 @@ impl Chessboard {
         // Same reasoning as above
         let capture_offset = Coords::new(Dir::E_OFFSET, rank_offset);
         let east_captures = pieces
-            .intersection(!BitBoard::H_FILE)
+            .intersection(!BitBoard::FILE_H)
             .translated(capture_offset)
             .intersection(opposing_pieces);
         Self::add_moves(moves, capture_offset, &east_captures.serialized());
@@ -352,19 +429,7 @@ impl Chessboard {
         let valid_tiles = !self.colors[color];
 
         for offset in Coords::KNIGHT_OFFSETS {
-            // Filter out moves which will go OOB horisontally (we don't have to worry about vertical
-            // OOB as they will be shifted away)
-            let mask = match offset.file {
-                -2 => !(BitBoard::A_FILE.union(BitBoard::B_FILE)),
-                -1 => !BitBoard::A_FILE,
-                1 => !BitBoard::H_FILE,
-                2 => !(BitBoard::G_FILE.union(BitBoard::H_FILE)),
-                _ => BitBoard::FULL,
-            };
-            let possible_moves = pieces
-                .intersection(mask)
-                .translated(offset)
-                .intersection(valid_tiles);
+            let possible_moves = pieces.translated(offset).intersection(valid_tiles);
             Self::add_moves(moves, offset, &possible_moves.serialized());
         }
     }
@@ -457,8 +522,8 @@ impl Chessboard {
             // Filter out moves which will go OOB horisontally (we don't have to worry about vertical
             // OOB as they will be shifted away)
             let mask = match offset.file {
-                Dir::W_OFFSET => !BitBoard::A_FILE,
-                Dir::E_OFFSET => !BitBoard::H_FILE,
+                Dir::W_OFFSET => !BitBoard::FILE_A,
+                Dir::E_OFFSET => !BitBoard::FILE_H,
                 _ => BitBoard::FULL,
             };
             let possible_moves = piece
@@ -523,16 +588,16 @@ impl Chess for Chessboard {
         ret
     }
 
-    fn moves_from(&self, origin: Position) -> Vec<Move> {
-        let mut moves = Vec::new();
+    fn moves_from(&self, origin: Position) -> Vec<Position> {
         let Piece { color, piece } = match self.piece_at(origin) {
             Some(p) => p,
-            None => return moves,
+            None => return Vec::new(),
         };
+        let mut moves = Vec::new();
         if origin.is_in_bounds() {
             self.generate_moves(&mut moves, piece, color, origin.to_mask());
         }
-        moves
+        moves.iter().map(|m| m.1).collect()
     }
 
     fn moves_by_piece(&self, piece: PieceType, color: ChessColor) -> Vec<Move> {
@@ -594,5 +659,80 @@ impl Chess for Chessboard {
 
     fn undo(&mut self) {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use Position as P;
+
+    #[test]
+    fn test_translate() {
+        assert_eq!(
+            BitBoard::FILE_B.translated(Coords::new(5, 1)),
+            BitBoard::FILE_G.clear(6),
+        );
+        assert_eq!(
+            BitBoard::RANK_1.translated(Coords::new(0, 1)),
+            BitBoard::RANK_2,
+        );
+        assert_eq!(
+            BitBoard::RANK_2.translated(Coords::new(2, -1)),
+            BitBoard::RANK_1.clear(0).clear(1),
+        );
+    }
+
+    #[test]
+    fn test_generate_pawn_moves() {
+        let mut board = Chessboard::default();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("c2").unwrap()));
+        let expected = BitBoard::from_pos_list(&[P::uci("c3").unwrap(), P::uci("c4").unwrap()]);
+
+        assert_eq!(moves, expected);
+
+        let move1 = Move(P::uci("e2").unwrap(), P::uci("e4").unwrap());
+
+        board.move_piece(move1).unwrap();
+        board
+            .move_piece(Move(P::uci("f7").unwrap(), P::uci("f5").unwrap()))
+            .unwrap();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
+        let expected = BitBoard::from_pos_list(&[P::uci("e5").unwrap(), P::uci("f5").unwrap()]);
+
+        assert_eq!(moves, expected);
+
+        board
+            .move_piece(Move(P::uci("f5").unwrap(), P::uci("e5").unwrap()))
+            .unwrap();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
+        assert_eq!(moves, BitBoard::zero());
+    }
+
+    #[test]
+    fn test_generate_knight_moves() {
+        let mut board = Chessboard::default();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("b1").unwrap()));
+        let expected = BitBoard::from_pos_list(&[P::uci("a3").unwrap(), P::uci("c3").unwrap()]);
+
+        assert_eq!(moves, expected);
+
+        let move1 = Move(P(0o01), P(0o57));
+
+        board.move_piece(move1).unwrap();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
+        let expected = BitBoard::from_pos_list(&[
+            P::uci("g8").unwrap(),
+            P::uci("f7").unwrap(),
+            P::uci("f5").unwrap(),
+            P::uci("g4").unwrap(),
+        ]);
+
+        assert_eq!(moves, expected);
     }
 }

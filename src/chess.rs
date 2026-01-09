@@ -1,5 +1,6 @@
+use core::fmt;
 use std::{
-    fmt::Display,
+    fmt::{Display, Write as _},
     ops::{Add, Mul, Neg, Sub},
 };
 
@@ -25,7 +26,7 @@ pub struct Coords {
 pub trait Chess {
     fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError>;
     fn piece_at(&self, pos: Position) -> Option<Piece>;
-    fn moves_from(&self, pos: Position) -> Vec<Move>;
+    fn moves_from(&self, pos: Position) -> Vec<Position>;
     fn moves_by_piece(&self, piece: PieceType, color: ChessColor) -> Vec<Move>;
     fn all_moves(&self) -> Vec<Move> {
         let color = self.current_turn();
@@ -76,7 +77,7 @@ impl Position {
         }
     }
 
-    pub fn from_uci(uci: &str) -> Result<Self, ParseMoveError> {
+    pub fn uci(uci: &str) -> Result<Self, ParseMoveError> {
         let mut chars = uci.chars();
         let col = chars.next().ok_or(ParseMoveError::InvalidLength)?;
         let col = if ('a'..='h').contains(&col) {
@@ -89,7 +90,7 @@ impl Position {
         let row = if ('1'..='8').contains(&row) {
             row as u8 - b'1'
         } else {
-            return Err(ParseMoveError::InvalidFile);
+            return Err(ParseMoveError::InvalidRank);
         };
         Ok(Position(row * 8 + col))
     }
@@ -110,6 +111,40 @@ impl Position {
 impl Display for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!("{}", self.to_coords()))
+    }
+}
+
+impl fmt::Debug for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.to_mask())
+    }
+}
+
+impl Display for Move {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}->{}", self.0, self.1)
+    }
+}
+
+impl fmt::Debug for Move {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_char('\n')?;
+        for rank in (0..8).rev() {
+            for file in 0..8 {
+                let Move(from, to) = self;
+                let pos = &Coords::new(file, rank).to_pos();
+                if pos == from {
+                    f.write_char('F')?;
+                } else if pos == to {
+                    f.write_char('T')?;
+                } else {
+                    f.write_char('·')?;
+                }
+                f.write_char(' ')?;
+            }
+            f.write_char('\n')?;
+        }
+        Ok(())
     }
 }
 
@@ -149,8 +184,8 @@ impl Coords {
 impl Display for Coords {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut s = String::with_capacity(2);
-        s.push((self.rank as u8 + b'a') as char);
-        s.push((self.file as u8 + b'1') as char);
+        s.push((self.file as u8 + b'a') as char);
+        s.push((self.rank as u8 + b'1') as char);
         f.write_str(&s)
     }
 }
@@ -210,6 +245,7 @@ impl Dir {
     pub const DIAGONAL: [Coords; 4] = [Dir::NE, Dir::NW, Dir::SW, Dir::SE];
 }
 
+#[derive(Debug)]
 pub enum ParseMoveError {
     InvalidLength,
     InvalidFile,
@@ -219,8 +255,8 @@ pub enum ParseMoveError {
 
 impl Move {
     fn from_uci(uci: &str) -> Result<Self, ParseMoveError> {
-        let from = Position::from_uci(&uci[0..2])?;
-        let to = Position::from_uci(&uci[2..4])?;
+        let from = Position::uci(&uci[0..2])?;
+        let to = Position::uci(&uci[2..4])?;
         Ok(Move(from, to))
     }
 }
@@ -232,4 +268,17 @@ pub enum ChessMoveError {
     SameColorCapture,
     IllegalMove,
     GameHasEnded,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_position_to_coords() {
+        assert_eq!(Position(3).to_coords(), Coords::new(3, 0));
+        assert_eq!(Position(8).to_coords(), Coords::new(0, 1));
+        assert_eq!(Position(14).to_coords(), Coords::new(6, 1));
+        assert_eq!(Position(63).to_coords(), Coords::new(7, 7));
+    }
 }
