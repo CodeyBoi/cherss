@@ -90,10 +90,10 @@ impl BitBoard {
     }
 
     pub fn serialize_into(self, v: &mut Vec<Position>) {
-        let mut value = self.0;
-        while value != 0 {
-            v.push(Position(self.0.trailing_zeros() as u8));
-            value = self.clear_least_significant_set_bit().0;
+        let mut board = self;
+        while board != BitBoard::zero() {
+            v.push(Position(board.0.trailing_zeros() as u8));
+            board = board.with_lsb_cleared();
         }
     }
 
@@ -123,16 +123,20 @@ impl BitBoard {
         }
     }
 
-    pub const fn isolate_least_significant_set_bit(self) -> Self {
+    pub const fn isolate_lsb(self) -> Self {
         Self(self.0 & self.0.wrapping_neg())
     }
 
-    pub const fn clear_least_significant_set_bit(self) -> Self {
+    pub const fn with_lsb_cleared(self) -> Self {
         Self(self.0 & (self.0.wrapping_sub(1)))
     }
 
-    pub const fn clear_most_significant_set_bit(self) -> Self {
-        Self(self.0 & !(1 << (63 - self.0.leading_zeros())))
+    pub const fn with_msb_cleared(self) -> Self {
+        if self.0 == 0 {
+            self
+        } else {
+            Self(self.0 & !(1 << (63 - self.0.leading_zeros())))
+        }
     }
 
     fn generate_attack_ray(position: Position, direction: Coords) -> BitBoard {
@@ -281,16 +285,8 @@ impl Chessboard {
         let Piece { color, piece } = self.piece_at(from).ok_or(ChessMoveError::MissingPiece)?;
 
         let legal_moves = self.moves_by_piece(piece, color);
-        eprintln!(
-            "[{}]",
-            legal_moves
-                .iter()
-                .map(|v| v.to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
 
-        if !legal_moves.iter().any(|&Move(f, t)| f == from && t == to) {
+        if !legal_moves.contains(&Move(from, to)) {
             return Err(ChessMoveError::IllegalMove);
         }
 
@@ -310,13 +306,13 @@ impl Chessboard {
                     return Err(ChessMoveError::SameColorCapture);
                 }
 
-                self.pieces[piece.piece] = self.pieces[piece.piece].clear(from.0).set(to.0);
-                self.colors[piece.color] = self.colors[piece.color].clear(from.0).set(to.0);
-
                 if let Some(cap) = capture {
                     self.pieces[cap.piece] = self.pieces[cap.piece].clear(to.0);
                     self.colors[cap.color] = self.colors[cap.color].clear(to.0);
                 }
+
+                self.pieces[piece.piece] = self.pieces[piece.piece].clear(from.0).set(to.0);
+                self.colors[piece.color] = self.colors[piece.color].clear(from.0).set(to.0);
 
                 Ok(())
             }
@@ -361,15 +357,6 @@ impl Chessboard {
 
     fn add_moves(moves: &mut Vec<Move>, offset: Coords, positions: &[Position]) {
         for pos in positions {
-            eprintln!(
-                "offset: {:?}, [{}]",
-                offset,
-                positions
-                    .iter()
-                    .map(|v| v.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
             let origin = pos
                 .translate_by_coords(-offset)
                 .expect("`add_moves` assumes no horizontal wrapping");
@@ -445,9 +432,9 @@ impl Chessboard {
         for ray_pattern in rays {
             let blockers = ray_pattern.intersection(occupancy);
             let blockers_past_first = if is_positive_direction {
-                blockers.clear_least_significant_set_bit()
+                blockers.with_lsb_cleared()
             } else {
-                blockers.clear_most_significant_set_bit()
+                blockers.with_msb_cleared()
             };
             possible_moves = possible_moves.union(ray_pattern.intersection(!blockers_past_first));
         }
@@ -584,7 +571,9 @@ impl Default for Chessboard {
 impl Chess for Chessboard {
     fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError> {
         let ret = self.make_move(chess_move);
-        self.current_turn = !self.current_turn;
+        if ret.is_ok() {
+            self.current_turn = !self.current_turn;
+        }
         ret
     }
 

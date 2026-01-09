@@ -71,7 +71,7 @@ impl Widget for &mut ChessGame {
             buf.set_string(
                 tile_area.x,
                 tile_area.y,
-                format!("{} ({})", pos.0, pos),
+                format!("{} ({})", pos, pos.0),
                 Style::new().black(),
             );
             tile.render(*tile_area, buf);
@@ -157,21 +157,23 @@ impl ChessGame {
     }
 
     pub fn handle_click(&mut self, pos: Position) {
-        println!("{}", pos);
-
         // If we have an active tile, try to move
         if let Some(last_interact) = self.active_tile {
             // If move is successful, reset active tile
             if self.board.make_move(Move(last_interact, pos)).is_ok() {
-                println!("Move made!");
+                eprintln!("Move made: {}->{}", last_interact, pos);
                 self.active_tile = None;
                 return;
+            } else {
+                eprintln!("Invalid move: {}->{}", last_interact, pos);
             }
         }
+        eprintln!("Going further");
 
         // Check if we pressed a piece and in that case set that tile as the active tile
         if let Some(piece) = self.board.piece_at(pos) {
             if piece.color == self.board.current_turn() {
+                eprintln!("Selected {:?} at {}", piece.piece, pos);
                 self.active_tile = Some(pos);
             }
         }
