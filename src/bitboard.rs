@@ -50,6 +50,7 @@ lazy_static! {
     static ref RAYS_SW: AttackPatterns = BitBoard::generate_attack_rays(Dir::SW);
     static ref RAYS_S: AttackPatterns = BitBoard::generate_attack_rays(Dir::S);
     static ref RAYS_SE: AttackPatterns = BitBoard::generate_attack_rays(Dir::SE);
+    static ref ATTACK_LOOKUP: [[u8; 8]; 64] = BitBoard::generate_attack_lookups();
 }
 
 impl BitBoard {
@@ -158,6 +159,45 @@ impl BitBoard {
             *board = Self::generate_attack_ray(Position(i as u8), direction);
         }
         boards
+    }
+
+    // Index into this attack lookup is the middle 6 bits of the rank (or file). The edges don't matter, as there are no tiles behind them.
+    fn generate_attack_lookups() -> [[u8; 8]; 64] {
+        let mut table = [[0; 8]; 64];
+        for occupancy in 0u8..64 {
+            for pos in 0u8..8 {
+                table[occupancy as usize][pos as usize] =
+                    Self::generate_attack_lookup(occupancy, pos);
+            }
+        }
+        table
+    }
+
+    fn generate_attack_lookup(occupancy: u8, piece_pos: u8) -> u8 {
+        // Occupancy at the edges don't matter, as there are no tiles behind them.
+        let occupancy = occupancy << 1;
+        let mut res = 0x0;
+        // Look east
+        for pos in piece_pos + 1..8 {
+            let mask = 1 << pos;
+            res |= mask;
+            if occupancy & mask != 0 {
+                break;
+            }
+        }
+
+        // Look west
+        for pos in (0..piece_pos).rev() {
+            let mask = 1 << pos;
+            res |= mask;
+            if occupancy & mask != 0 {
+                break;
+            }
+        }
+
+        eprintln!("           {}V", " ".repeat(7 - piece_pos as usize));
+        eprintln!("occupancy: {:08b}\n   attack: {:08b}", occupancy, res);
+        res
     }
 
     fn from_pos_list(cells: &[Position]) -> Self {
@@ -282,6 +322,7 @@ impl Chessboard {
     }
 
     pub fn make_move(&mut self, Move(from, to): Move) -> Result<(), ChessMoveError> {
+        BitBoard::generate_attack_lookups();
         let Piece { color, piece } = self.piece_at(from).ok_or(ChessMoveError::MissingPiece)?;
 
         let legal_moves = self.moves_by_piece(piece, color);
