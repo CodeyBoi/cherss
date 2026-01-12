@@ -7,7 +7,7 @@ use std::{
 use lazy_static::lazy_static;
 
 use crate::{
-    chess::{Chess, ChessMoveError, Coords, Dir, Move, Position},
+    chess::{Chess, ChessMoveError, Coords, Dir, Line, LineOrientation, Move, Position},
     chessboard::ChessResult,
     chessgame::ChessGame,
     piece::{ChessColor, Piece, PieceType, PIECE_TYPES},
@@ -51,20 +51,21 @@ lazy_static! {
     static ref RAYS_S: AttackPatterns = BitBoard::generate_attack_rays(Dir::S);
     static ref RAYS_SE: AttackPatterns = BitBoard::generate_attack_rays(Dir::SE);
     static ref ATTACK_LOOKUP: [[u8; 8]; 64] = BitBoard::generate_attack_lookups();
+    static ref KNIGHT_LOOKUP: [BitBoard; 64] = BitBoard::generate_knight_lookup();
 }
 
 impl BitBoard {
     const FULL: Self = Self(!0);
 
     const FILE_A: Self = Self(0x0101_0101_0101_0101);
-    const FILE_B: Self = Self(0x0202_0202_0202_0202);
-    const FILE_G: Self = Self(0x4040_4040_4040_4040);
-    const FILE_H: Self = Self(0x8080_8080_8080_8080);
 
     const RANK_1: Self = Self(0x0000_0000_0000_00ff);
     const RANK_2: Self = Self(0x0000_0000_0000_ff00);
     const RANK_7: Self = Self(0x00ff_0000_0000_0000);
     const RANK_8: Self = Self(0xff00_0000_0000_0000);
+
+    const DIAGONAL: Self = Self(0x8040_2010_0804_0201);
+    const ANTI_DIAGONAL: Self = Self(0x0102_0408_1020_4080);
 
     pub const fn zero() -> Self {
         Self(0)
@@ -86,8 +87,36 @@ impl BitBoard {
         Self(self.0 | rhs.0)
     }
 
-    pub const fn intersection(self, rhs: Self) -> Self {
+    pub const fn intersect(self, rhs: Self) -> Self {
         Self(self.0 & rhs.0)
+    }
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub const fn from_rank(rank: u8) -> Self {
+        Self(Self::RANK_1.0 << (rank * 8))
+    }
+
+    pub const fn from_file(file: u8) -> Self {
+        Self(Self::FILE_A.0 << file)
+    }
+
+    pub const fn diagonal(offset: i8) -> Self {
+        if offset >= 0 {
+            Self(Self::DIAGONAL.0 << (offset.abs() * 8))
+        } else {
+            Self(Self::DIAGONAL.0 >> (offset.abs() * 8))
+        }
+    }
+
+    pub const fn anti_diagonal(offset: i8) -> Self {
+        if offset >= 0 {
+            Self(Self::ANTI_DIAGONAL.0 << (offset.abs() * 8))
+        } else {
+            Self(Self::ANTI_DIAGONAL.0 >> (offset.abs() * 8))
+        }
     }
 
     pub fn serialize_into(self, v: &mut Vec<Position>) {
@@ -104,23 +133,30 @@ impl BitBoard {
         v
     }
 
-    pub fn translated(self, offset: Coords) -> Self {
+    pub fn translate(self, file: i8, rank: i8) -> Self {
+        let shift_offset = rank * 8 + file;
+        if file == 0 {
+            return if shift_offset > 0 {
+                Self(self.0 << shift_offset)
+            } else {
+                Self(self.0 >> -shift_offset)
+            };
+        }
         // Filter out cells which would wrap horizontally
         let mask = {
-            let cols = (0..offset.file.abs()).fold(Self::zero(), |acc, i| {
+            let cols = (0..file.abs()).fold(Self::zero(), |acc, i| {
                 acc.union(BitBoard(Self::FILE_A.0 << i))
             });
-            if offset.file > 0 {
-                !BitBoard(cols.0 << (8 - offset.file))
+            if file > 0 {
+                !BitBoard(cols.0 << (8 - file))
             } else {
                 !cols
             }
         };
-        let shift_offset = offset.rank * 8 + offset.file;
         if shift_offset > 0 {
-            Self(self.intersection(mask).0 << shift_offset)
+            Self(self.intersect(mask).0 << shift_offset)
         } else {
-            Self(self.intersection(mask).0 >> -shift_offset)
+            Self(self.intersect(mask).0 >> -shift_offset)
         }
     }
 
@@ -161,7 +197,57 @@ impl BitBoard {
         boards
     }
 
-    // Index into this attack lookup is the middle 6 bits of the rank (or file). The edges don't matter, as there are no tiles behind them.
+    fn fill(self, rhs: Self) -> Self {
+        Self(self.wrapping_mul(rhs.0))
+    }
+
+    fn fill_north(self) -> Self {
+        self.fill(Self::FILE_A)
+    }
+
+    fn get_line(self, line: Line) -> u8 {
+        use Line as L;
+        // These lines are extracted as per https://www.chessprogramming.org/Kindergarten_Bitboards
+        match line {
+            L::Rank(rank) => self.translate(0, -(rank as i8)).intersect(Self::RANK_1),
+            L::File(file) => self
+                .translate(-(file as i8), 0)
+                .intersect(BitBoard::FILE_A)
+                .fill(Self::ANTI_DIAGONAL)
+                .translate(0, -7),
+            L::Diagonal(offset) => self
+                .intersect(Self::DIAGONAL.translate(0, offset))
+                .fill_north()
+                .translate(0, -7),
+            L::AntiDiagonal(offset) => self
+                .intersect(Self::ANTI_DIAGONAL.translate(0, offset))
+                .fill_north()
+                .translate(0, -7),
+        }
+        .0 as u8
+    }
+
+    /// Constructs a BitBoard given an occupancy line and its location. The inverse of get_line().
+    fn from_line(line: u8, location: Line) -> Self {
+        use Line as L;
+        // board starts out with the occupancy in the first rank
+        let board = Self(line as u64);
+        match location {
+            L::Rank(rank) => board.translate(0, rank as i8),
+            L::File(file) => board
+                .fill(Self::ANTI_DIAGONAL)
+                .intersect(Self::from_file(7))
+                .translate(-7i8.saturating_sub_unsigned(file), 0),
+            L::Diagonal(offset) => board
+                .fill_north()
+                .intersect(Self::DIAGONAL.translate(0, offset)),
+            L::AntiDiagonal(offset) => board
+                .fill_north()
+                .intersect(Self::ANTI_DIAGONAL.translate(0, offset)),
+        }
+    }
+
+    // Index into this attack lookup is the middle 6 bits of the rank/file/diagonal. The edges don't matter, as there are no tiles behind them.
     fn generate_attack_lookups() -> [[u8; 8]; 64] {
         let mut table = [[0; 8]; 64];
         for occupancy in 0u8..64 {
@@ -195,8 +281,22 @@ impl BitBoard {
             }
         }
 
-        eprintln!("           {}V", " ".repeat(7 - piece_pos as usize));
-        eprintln!("occupancy: {:08b}\n   attack: {:08b}", occupancy, res);
+        // eprintln!("           {}V", " ".repeat(7 - piece_pos as usize));
+        // eprintln!("occupancy: {:08b}\n   attack: {:08b}", occupancy, res);
+        res
+    }
+
+    fn generate_knight_lookup() -> [Self; 64] {
+        let mut res = [BitBoard::zero(); 64];
+        for i in 0..64 {
+            let pos = Position(i as u8);
+            let mask = pos.to_mask();
+            res[i] = Coords::KNIGHT_OFFSETS
+                .iter()
+                .fold(BitBoard::zero(), |acc, offset| {
+                    acc.union(mask.translate(offset.file, offset.rank))
+                });
+        }
         res
     }
 
@@ -286,7 +386,7 @@ pub struct Chessboard {
 
 impl Chessboard {
     pub fn get(&self, piece: PieceType, color: ChessColor) -> BitBoard {
-        self.pieces[piece].intersection(self.colors[color])
+        self.pieces[piece].intersect(self.colors[color])
     }
 
     pub fn with_players(white_player: Player, black_player: Player) -> Self {
@@ -379,16 +479,44 @@ impl Chessboard {
                 self.generate_pawn_moves(moves, piece_map, color);
             }
             P::Knight => {
-                self.generate_knight_moves(moves, piece_map, color);
+                for pos in piece_map.serialized() {
+                    Self::add_moves_with_origin(
+                        moves,
+                        pos,
+                        &self
+                            .generate_knight_moves(pos.to_mask(), color)
+                            .serialized(),
+                    );
+                }
             }
             P::Bishop => {
-                self.generate_bishop_moves(moves, piece_map, color);
+                for pos in piece_map.serialized() {
+                    Self::add_moves_with_origin(
+                        moves,
+                        pos,
+                        &self
+                            .generate_bishop_moves(pos.to_mask(), color)
+                            .serialized(),
+                    );
+                }
             }
             P::Rook => {
-                self.generate_rook_moves(moves, piece_map, color);
+                for pos in piece_map.serialized() {
+                    Self::add_moves_with_origin(
+                        moves,
+                        pos,
+                        &self.generate_rook_moves(pos.to_mask(), color).serialized(),
+                    );
+                }
             }
             P::Queen => {
-                self.generate_queen_moves(moves, piece_map, color);
+                for pos in piece_map.serialized() {
+                    Self::add_moves_with_origin(
+                        moves,
+                        pos,
+                        &self.generate_queen_moves(pos.to_mask(), color).serialized(),
+                    );
+                }
             }
             P::King => {
                 self.generate_king_moves(moves, piece_map, color);
@@ -423,123 +551,95 @@ impl Chessboard {
         // We cannot move into any other pieces (except when capturing)
         let valid_moves = !self.occupancy();
         let offset_dir = Coords::new(0, rank_offset);
-        let move_one_tile = pieces.translated(offset_dir).intersection(valid_moves);
+        let move_one_tile = pieces.translate(0, rank_offset).intersect(valid_moves);
         Self::add_moves(moves, offset_dir, &move_one_tile.serialized());
 
         // Start checking from `move_one_tile` to check that no pieces are blocking
         let move_two_tiles = move_one_tile
-            .translated(offset_dir)
-            .intersection(valid_moves)
+            .translate(0, rank_offset)
+            .intersect(valid_moves)
             // Filter out pieces which didn't start at the correct rank
-            .intersection(double_move_mask.translated(2 * offset_dir));
+            .intersect(double_move_mask.translate(0, 2 * rank_offset));
         Self::add_moves(moves, 2 * offset_dir, &move_two_tiles.serialized());
 
         let capture_offset = Coords::new(Dir::W_OFFSET, rank_offset);
         let west_captures = pieces
-            // Filter out pawns which would wrap horizontally
-            .intersection(!BitBoard::FILE_A)
-            .translated(capture_offset)
+            .translate(Dir::W_OFFSET, rank_offset)
             // We can only capture on squares with an opposing piece
-            .intersection(opposing_pieces);
+            .intersect(opposing_pieces);
         Self::add_moves(moves, capture_offset, &west_captures.serialized());
 
         // Same reasoning as above
         let capture_offset = Coords::new(Dir::E_OFFSET, rank_offset);
         let east_captures = pieces
-            .intersection(!BitBoard::FILE_H)
-            .translated(capture_offset)
-            .intersection(opposing_pieces);
+            .translate(Dir::E_OFFSET, rank_offset)
+            .intersect(opposing_pieces);
         Self::add_moves(moves, capture_offset, &east_captures.serialized());
     }
 
-    fn generate_knight_moves(&self, moves: &mut Vec<Move>, pieces: BitBoard, color: ChessColor) {
+    fn generate_knight_moves(&self, pieces: BitBoard, color: ChessColor) -> BitBoard {
         // We cannot move to or capture our own pieces
         let valid_tiles = !self.colors[color];
-
-        for offset in Coords::KNIGHT_OFFSETS {
-            let possible_moves = pieces.translated(offset).intersection(valid_tiles);
-            Self::add_moves(moves, offset, &possible_moves.serialized());
-        }
-    }
-
-    fn generate_sliding_attack_board(
-        &self,
-        rays: &[BitBoard],
-        is_positive_direction: bool,
-    ) -> BitBoard {
-        let occupancy = self.occupancy();
-
-        let mut possible_moves = BitBoard::zero();
-        for ray_pattern in rays {
-            let blockers = ray_pattern.intersection(occupancy);
-            let blockers_past_first = if is_positive_direction {
-                blockers.with_lsb_cleared()
-            } else {
-                blockers.with_msb_cleared()
-            };
-            possible_moves = possible_moves.union(ray_pattern.intersection(!blockers_past_first));
-        }
-        possible_moves
+        pieces
+            .serialized()
+            .iter()
+            .fold(BitBoard::zero(), |acc, pos| {
+                acc.union(KNIGHT_LOOKUP[pos.0 as usize].intersect(valid_tiles))
+            })
     }
 
     fn generate_sliding_moves(
         &self,
-        moves: &mut Vec<Move>,
-        pieces: BitBoard,
-        color: ChessColor,
-        attack_patterns: &[&AttackPatterns],
-        is_positive_direction: bool,
-    ) {
+        occupancy: BitBoard,
+        position: Position,
+        directions: &[LineOrientation],
+    ) -> BitBoard {
+        directions.iter().fold(BitBoard::zero(), |acc, dir| {
+            let (location, line_index) = position.containing_line(*dir);
+            let line_occupancy = occupancy.get_line(location);
+            let possible_line_moves =
+                ATTACK_LOOKUP[((line_occupancy & 0b01111110) >> 1) as usize][line_index as usize];
+            BitBoard::from_line(possible_line_moves, location).union(acc)
+        })
+    }
+
+    fn generate_bishop_moves(&self, pieces: BitBoard, color: ChessColor) -> BitBoard {
+        let occupancy = self.occupancy();
         let valid_tiles = !self.colors[color];
-        for piece in pieces.serialized() {
-            let rays = attack_patterns
-                .iter()
-                .map(|rays| rays[piece])
-                .collect::<Vec<_>>();
-            let attack_board =
-                self.generate_sliding_attack_board(rays.as_slice(), is_positive_direction);
-            let possible_moves = attack_board.intersection(valid_tiles);
-            Self::add_moves_with_origin(moves, piece, &possible_moves.serialized());
-        }
+        pieces
+            .serialized()
+            .iter()
+            .fold(BitBoard::zero(), |acc, pos| {
+                self.generate_sliding_moves(
+                    occupancy,
+                    *pos,
+                    &[LineOrientation::Diagonal, LineOrientation::AntiDiagonal],
+                )
+                .union(acc)
+            })
+            .intersect(valid_tiles)
     }
 
-    fn generate_bishop_moves(&self, moves: &mut Vec<Move>, pieces: BitBoard, color: ChessColor) {
-        self.generate_sliding_moves(
-            moves,
-            pieces,
-            color,
-            [RAYS_NE.deref(), RAYS_NW.deref()].as_slice(),
-            true,
-        );
-        self.generate_sliding_moves(
-            moves,
-            pieces,
-            color,
-            [RAYS_SE.deref(), RAYS_SW.deref()].as_slice(),
-            false,
-        );
+    fn generate_rook_moves(&self, pieces: BitBoard, color: ChessColor) -> BitBoard {
+        let occupancy = self.occupancy();
+        let valid_tiles = !self.colors[color];
+        pieces
+            .serialized()
+            .iter()
+            .fold(BitBoard::zero(), |acc, pos| {
+                self.generate_sliding_moves(
+                    occupancy,
+                    *pos,
+                    &[LineOrientation::Rank, LineOrientation::File],
+                )
+                .union(acc)
+            })
+            .intersect(valid_tiles)
     }
 
-    fn generate_rook_moves(&self, moves: &mut Vec<Move>, pieces: BitBoard, color: ChessColor) {
-        self.generate_sliding_moves(
-            moves,
-            pieces,
-            color,
-            [RAYS_N.deref(), RAYS_E.deref()].as_slice(),
-            true,
-        );
-        self.generate_sliding_moves(
-            moves,
-            pieces,
-            color,
-            [RAYS_S.deref(), RAYS_W.deref()].as_slice(),
-            false,
-        );
-    }
-
-    fn generate_queen_moves(&self, moves: &mut Vec<Move>, pieces: BitBoard, color: ChessColor) {
-        self.generate_bishop_moves(moves, pieces, color);
-        self.generate_rook_moves(moves, pieces, color);
+    fn generate_queen_moves(&self, pieces: BitBoard, color: ChessColor) -> BitBoard {
+        self.generate_bishop_moves(pieces, color)
+            .union(self.generate_rook_moves(pieces, color))
     }
 
     fn generate_king_moves(&self, moves: &mut Vec<Move>, piece: BitBoard, color: ChessColor) {
@@ -551,18 +651,46 @@ impl Chessboard {
             // OOB as they will be shifted away)
             let mask = match offset.file {
                 Dir::W_OFFSET => !BitBoard::FILE_A,
-                Dir::E_OFFSET => !BitBoard::FILE_H,
+                Dir::E_OFFSET => !BitBoard::from_file(7),
                 _ => BitBoard::FULL,
             };
             let possible_moves = piece
-                .intersection(mask)
-                .translated(offset)
-                .intersection(valid_tiles);
+                .intersect(mask)
+                .translate(offset.file, offset.rank)
+                .intersect(valid_tiles);
 
             // TODO: Filter moves which put king in check
 
             Self::add_moves(moves, offset, &possible_moves.serialized());
         }
+    }
+
+    fn get_attack_map(&self, color: ChessColor) -> BitBoard {
+        let mut attack_map = BitBoard::zero();
+
+        let pieces = self.colors[color];
+
+        // Handle pawns
+        let rank_offset = match color {
+            ChessColor::White => Dir::N_OFFSET,
+            ChessColor::Black => Dir::S_OFFSET,
+        };
+
+        let pawns = pieces.intersect(self.pieces[PieceType::Pawn]);
+        attack_map = attack_map.union(pawns.translate(Dir::W_OFFSET, rank_offset));
+        attack_map = attack_map.union(pieces.translate(Dir::E_OFFSET, rank_offset));
+
+        let knights = pieces.intersect(self.pieces[PieceType::Knight]);
+        attack_map = knights.serialized().iter().fold(attack_map, |acc, pos| {
+            acc.union(KNIGHT_LOOKUP[pos.0 as usize])
+        });
+
+        let knights = pieces.intersect(self.pieces[PieceType::Knight]);
+        attack_map = knights.serialized().iter().fold(attack_map, |acc, pos| {
+            acc.union(KNIGHT_LOOKUP[pos.0 as usize])
+        });
+
+        attack_map
     }
 }
 
@@ -596,6 +724,19 @@ impl Default for Chessboard {
             c[ChessColor::Black] = BLACK;
             c
         };
+
+        // for line in [
+        //     BitBoard::FILE_A,
+        //     BitBoard::DIAGONAL,
+        //     BitBoard::ANTI_DIAGONAL,
+        // ] {
+        //     for i in 0..8 {
+        //         let val = 1u64 << i;
+        //         let board = BitBoard(val as u64);
+        //         let result = BitBoard(board.0.wrapping_mul(line.0));
+        //         eprintln!("val={val}, {}{}", board, result);
+        //     }
+        // }
 
         Self {
             pieces,
@@ -652,9 +793,9 @@ impl Chess for Chessboard {
         }
 
         let mask = pos.to_mask();
-        let color = if self.colors[ChessColor::White].intersection(mask).0 != 0 {
+        let color = if self.colors[ChessColor::White].intersect(mask).0 != 0 {
             ChessColor::White
-        } else if self.colors[ChessColor::Black].intersection(mask).0 != 0 {
+        } else if self.colors[ChessColor::Black].intersect(mask).0 != 0 {
             ChessColor::Black
         } else {
             return None;
@@ -662,7 +803,7 @@ impl Chess for Chessboard {
 
         let piece = PIECE_TYPES
             .iter()
-            .find(|&&piece| self.pieces[piece].intersection(mask).0 != 0)?;
+            .find(|&&piece| self.pieces[piece].intersect(mask).0 != 0)?;
 
         Some(Piece::new(color, *piece))
     }
@@ -700,17 +841,45 @@ mod tests {
     #[test]
     fn test_translate() {
         assert_eq!(
-            BitBoard::FILE_B.translated(Coords::new(5, 1)),
-            BitBoard::FILE_G.clear(6),
+            BitBoard::from_file(1).translate(5, 1),
+            BitBoard::from_file(6).clear(6),
         );
+        assert_eq!(BitBoard::RANK_1.translate(0, 1), BitBoard::RANK_2);
         assert_eq!(
-            BitBoard::RANK_1.translated(Coords::new(0, 1)),
-            BitBoard::RANK_2,
-        );
-        assert_eq!(
-            BitBoard::RANK_2.translated(Coords::new(2, -1)),
+            BitBoard::RANK_2.translate(2, -1),
             BitBoard::RANK_1.clear(0).clear(1),
         );
+    }
+
+    #[test]
+    fn test_line_functions() {
+        const BOARD: BitBoard = BitBoard::from_file(1)
+            .union(BitBoard::RANK_8)
+            .set(32)
+            .set(34)
+            .set(53)
+            .set(43);
+
+        let tests = [
+            (Line::Rank(5), 0b0000_1010),
+            (Line::Rank(6), 0b0010_0010),
+            (Line::File(2), 0b1001_0000),
+            (Line::File(3), 0b1010_0000),
+            (Line::Diagonal(0), 0b1000_0010),
+            (Line::Diagonal(-2), 0b0000_0000),
+            (Line::Diagonal(2), 0b0010_1110),
+            (Line::AntiDiagonal(0), 0b0000_0011),
+            (Line::AntiDiagonal(-3), 0b0000_0011),
+            (Line::AntiDiagonal(1), 0b0000_1010),
+        ];
+
+        for (location, expected) in tests {
+            assert_eq!(BOARD.get_line(location), expected);
+            assert_eq!(
+                BitBoard::from_line(expected, location),
+                BOARD.intersect(location.to_mask()),
+            );
+        }
     }
 
     #[test]
@@ -762,6 +931,58 @@ mod tests {
             P::uci("f5").unwrap(),
             P::uci("g4").unwrap(),
         ]);
+
+        assert_eq!(moves, expected);
+    }
+
+    #[test]
+    fn test_generate_bishop_moves() {
+        let mut board = Chessboard::default();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("c1").unwrap()));
+        let expected = BitBoard::zero();
+
+        assert_eq!(moves, expected);
+
+        let move1 = Move(P(0o02), P(0o20));
+
+        board.move_piece(move1).unwrap();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
+        let expected = BitBoard::DIAGONAL.translate(1, 3).clear(0o75);
+
+        assert_eq!(moves, expected);
+    }
+
+    #[test]
+    fn test_generate_rook_moves() {
+        let mut board = Chessboard::default();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("a1").unwrap()));
+        let expected = BitBoard::zero();
+
+        assert_eq!(moves, expected);
+
+        let move1 = Move(P(0o00), P(0o20));
+
+        board.move_piece(move1).unwrap();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
+        let expected = BitBoard::FILE_A
+            .translate(0, 3)
+            .clear(0o70)
+            .union(BitBoard::RANK_1.translate(1, 2));
+
+        assert_eq!(moves, expected);
+
+        let move1 = Move(P(0o20), P(0o44));
+        board.move_piece(move1).unwrap();
+        let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
+        let expected = BitBoard::from_file(4)
+            .translate(0, 2)
+            .clear(0o74)
+            .union(BitBoard::from_rank(4))
+            .clear(move1.1 .0);
 
         assert_eq!(moves, expected);
     }

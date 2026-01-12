@@ -1,7 +1,7 @@
 use core::fmt;
 use std::{
     fmt::{Display, Write as _},
-    ops::{Add, Mul, Neg, Sub},
+    ops::{Add, Index, Mul, Neg, Sub},
 };
 
 use crate::{
@@ -21,6 +21,59 @@ pub struct Position(pub u8);
 pub struct Coords {
     pub file: i8,
     pub rank: i8,
+}
+
+/// An enum representing the different lines on a chess board
+#[derive(Clone, Copy)]
+pub enum Line {
+    Rank(u8),
+    File(u8),
+    /// The diagonal (a1-h8) translated by the contained value (where -7=a8, -6=a7-b8, and so on...)
+    Diagonal(i8),
+    /// The anti diagonal (a8-h1) translated by the contained value (where -7=h8, -6=g8-h7, and so on...)
+    AntiDiagonal(i8),
+}
+
+#[derive(Clone, Copy)]
+pub enum LineOrientation {
+    Rank,
+    File,
+    Diagonal,
+    AntiDiagonal,
+}
+
+impl Line {
+    fn new(position: Position, orientation: LineOrientation) -> Self {
+        use LineOrientation as O;
+        match orientation {
+            O::Rank => Self::Rank(position.rank()),
+            O::File => Self::File(position.file()),
+            O::Diagonal => Self::Diagonal(position.rank() as i8 - position.file() as i8),
+            O::AntiDiagonal => {
+                Self::AntiDiagonal(position.file() as i8 + position.rank() as i8 - 7)
+            }
+        }
+    }
+
+    pub fn to_mask(self) -> BitBoard {
+        match self {
+            Line::Rank(rank) => BitBoard::from_rank(rank),
+            Line::File(file) => BitBoard::from_file(file),
+            Line::Diagonal(offset) => BitBoard::diagonal(offset),
+            Line::AntiDiagonal(offset) => BitBoard::anti_diagonal(offset),
+        }
+    }
+}
+
+pub enum File {
+    A = 0,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
 }
 
 pub trait Chess {
@@ -66,6 +119,15 @@ impl Position {
         }
         let offset = rank_offset * 8 + file_offset;
         Some(Self(self.0 + offset as u8))
+    }
+
+    pub fn containing_line(self, orientation: LineOrientation) -> (Line, u8) {
+        let line = Line::new(self, orientation);
+        let index = match line {
+            Line::Rank(_) | Line::Diagonal(_) | Line::AntiDiagonal(_) => self.file(),
+            Line::File(_) => self.rank(),
+        };
+        (line, index)
     }
 
     pub fn translate_by_coords(self, offset: Coords) -> Option<Self> {
