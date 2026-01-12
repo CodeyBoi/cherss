@@ -50,8 +50,9 @@ lazy_static! {
     static ref RAYS_SW: AttackPatterns = BitBoard::generate_attack_rays(Dir::SW);
     static ref RAYS_S: AttackPatterns = BitBoard::generate_attack_rays(Dir::S);
     static ref RAYS_SE: AttackPatterns = BitBoard::generate_attack_rays(Dir::SE);
-    static ref ATTACK_LOOKUP: [[u8; 8]; 64] = BitBoard::generate_attack_lookups();
+    static ref SLIDING_ATTACK_LOOKUP: [[u8; 8]; 64] = BitBoard::generate_attack_lookups();
     static ref KNIGHT_LOOKUP: [BitBoard; 64] = BitBoard::generate_knight_lookup();
+    static ref KING_LOOKUP: [BitBoard; 64] = BitBoard::generate_king_lookup();
 }
 
 impl BitBoard {
@@ -288,10 +289,25 @@ impl BitBoard {
 
     fn generate_knight_lookup() -> [Self; 64] {
         let mut res = [BitBoard::zero(); 64];
-        for i in 0..64 {
+        for (i, board) in res.iter_mut().enumerate() {
             let pos = Position(i as u8);
             let mask = pos.to_mask();
-            res[i] = Coords::KNIGHT_OFFSETS
+            *board = Coords::KNIGHT_OFFSETS
+                .iter()
+                .fold(BitBoard::zero(), |acc, offset| {
+                    acc.union(mask.translate(offset.file, offset.rank))
+                });
+        }
+        res
+    }
+
+    fn generate_king_lookup() -> [Self; 64] {
+        let mut res = [BitBoard::zero(); 64];
+        for (i, board) in res.iter_mut().enumerate() {
+            let pos = Position(i as u8);
+            let mask = pos.to_mask();
+            *board = [Coords::CARDINAL, Coords::DIAGONAL]
+                .concat()
                 .iter()
                 .fold(BitBoard::zero(), |acc, offset| {
                     acc.union(mask.translate(offset.file, offset.rank))
@@ -519,7 +535,13 @@ impl Chessboard {
                 }
             }
             P::King => {
-                self.generate_king_moves(moves, piece_map, color);
+                for pos in piece_map.serialized() {
+                    Self::add_moves_with_origin(
+                        moves,
+                        pos,
+                        &self.generate_king_moves(pos.to_mask(), color).serialized(),
+                    );
+                }
             }
         };
     }
@@ -597,8 +619,8 @@ impl Chessboard {
         directions.iter().fold(BitBoard::zero(), |acc, dir| {
             let (location, line_index) = position.containing_line(*dir);
             let line_occupancy = occupancy.get_line(location);
-            let possible_line_moves =
-                ATTACK_LOOKUP[((line_occupancy & 0b01111110) >> 1) as usize][line_index as usize];
+            let possible_line_moves = SLIDING_ATTACK_LOOKUP
+                [((line_occupancy & 0b01111110) >> 1) as usize][line_index as usize];
             BitBoard::from_line(possible_line_moves, location).union(acc)
         })
     }
@@ -642,27 +664,10 @@ impl Chessboard {
             .union(self.generate_rook_moves(pieces, color))
     }
 
-    fn generate_king_moves(&self, moves: &mut Vec<Move>, piece: BitBoard, color: ChessColor) {
+    fn generate_king_moves(&self, piece: BitBoard, color: ChessColor) -> BitBoard {
         // We cannot move to or capture our own pieces
         let valid_tiles = !self.colors[color];
-
-        for offset in [Dir::CARDINAL, Dir::DIAGONAL].concat() {
-            // Filter out moves which will go OOB horisontally (we don't have to worry about vertical
-            // OOB as they will be shifted away)
-            let mask = match offset.file {
-                Dir::W_OFFSET => !BitBoard::FILE_A,
-                Dir::E_OFFSET => !BitBoard::from_file(7),
-                _ => BitBoard::FULL,
-            };
-            let possible_moves = piece
-                .intersect(mask)
-                .translate(offset.file, offset.rank)
-                .intersect(valid_tiles);
-
-            // TODO: Filter moves which put king in check
-
-            Self::add_moves(moves, offset, &possible_moves.serialized());
-        }
+        KING_LOOKUP[piece.trailing_zeros() as usize].intersect(valid_tiles)
     }
 
     fn get_attack_map(&self, color: ChessColor) -> BitBoard {

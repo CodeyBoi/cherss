@@ -171,7 +171,9 @@ impl ChessGame {
         eprintln!("Going further");
 
         // Check if we pressed a piece and in that case set that tile as the active tile
-        if let Some(piece) = self.board.piece_at(pos) {
+        let piece = self.board.piece_at(pos);
+        if piece.is_some_and(|p| p.color == self.board.current_turn()) {
+            let piece = piece.unwrap();
             if piece.color == self.board.current_turn() {
                 eprintln!("Selected {:?} at {}", piece.piece, pos);
                 self.active_tile = Some(pos);
