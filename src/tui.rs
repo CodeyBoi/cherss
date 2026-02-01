@@ -101,7 +101,8 @@ impl Widget for &Tile {
 pub struct App {
     tui: Tui,
     chess: ChessGame,
-    render_area: Rect,
+    board_area: Rect,
+    history_area: Rect,
 }
 
 impl App {
@@ -110,28 +111,44 @@ impl App {
 
         let app_area = tui.size()?;
         let tile_size = 10;
+        let history_width = 15;
         chess.set_tile_size(tile_size);
-        let (width, height) = (tile_size * SIZE as u16, tile_size * SIZE as u16 / 2);
+        let (board_width, board_height) = (tile_size * SIZE as u16, tile_size * SIZE as u16 / 2);
 
-        if app_area.width < width || app_area.height < height {
+        if app_area.width < board_width || app_area.height < board_height {
             println!(
                 "Please set terminal size to atleast {}x{} (current term size {}x{})",
-                width, height, app_area.width, app_area.height
+                board_width, board_height, app_area.width, app_area.height
             );
             return Ok(());
         }
 
-        let render_area = Rect {
-            x: app_area.x + (app_area.width - width) / 2,
-            y: app_area.y + (app_area.height - height) / 2,
-            width,
-            height,
-        };
+        let rows = Layout::vertical([
+            Constraint::Length(2),
+            Constraint::Length(board_height),
+            Constraint::Length(2),
+        ])
+        .split(app_area);
+        let columns = Layout::horizontal([
+            Constraint::Length(board_width),
+            Constraint::Length(history_width),
+        ])
+        .split(rows[1]);
+
+        let (board_area, history_area) = (columns[0], columns[1]);
+
+        // let board_area = Rect {
+        //     x: app_area.x + (app_area.width - board_width) / 2,
+        //     y: app_area.y + (app_area.height - board_height) / 2,
+        //     width: board_width,
+        //     height: board_height,
+        // };
 
         let mut app = App {
             tui,
             chess,
-            render_area,
+            board_area,
+            history_area,
         };
 
         init_terminal()?;
@@ -161,12 +178,12 @@ impl App {
             match event::read()? {
                 Event::Mouse(event) => {
                     if self
-                        .render_area
+                        .board_area
                         .contains(Position::new(event.column, event.row))
                     {
                         let (column, row) = (
-                            event.column.wrapping_sub(self.render_area.x),
-                            event.row.wrapping_sub(self.render_area.y),
+                            event.column.wrapping_sub(self.board_area.x),
+                            event.row.wrapping_sub(self.board_area.y),
                         );
                         let event = event::MouseEvent {
                             column,
@@ -192,7 +209,31 @@ impl App {
 
     fn render(&mut self) {
         let _ = self.tui.draw(|frame| {
-            frame.render_widget(&mut self.chess, self.render_area);
+            frame.render_widget(&mut self.chess, self.board_area);
+            let style = Style::new().fg(Color::White);
+            let mut history_items: Vec<_> = self
+                .chess
+                .board
+                .history()
+                .chunks(2)
+                .enumerate()
+                .map(|(i, moves)| {
+                    let mut text = format!("{}. {}-{}", i + 1, moves[0].0, moves[0].1);
+                    if moves.len() >= 2 {
+                        text.push_str(&format!(" {}-{}", moves[1].0, moves[1].1));
+                    }
+                    ListItem::new(Line::styled(text, style))
+                })
+                .collect();
+            if self.chess.board.history().len() % 2 == 0 {
+                history_items.push(ListItem::new(Line::styled(
+                    format!("{}.", self.chess.board.history().len() / 2 + 1),
+                    style,
+                )));
+            }
+            let history_widget = List::new(history_items);
+            frame.render_widget(history_widget, self.history_area);
+
             frame.set_cursor(0, 0);
         });
     }

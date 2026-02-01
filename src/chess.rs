@@ -24,7 +24,7 @@ pub struct Coords {
 }
 
 /// An enum representing the different lines on a chess board
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Line {
     Rank(u8),
     File(u8),

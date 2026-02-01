@@ -18,6 +18,7 @@ use crate::{
 pub struct BitBoard(pub u64);
 
 type AttackPatterns = [BitBoard; 64];
+type OccupancyLookup = [[u8; 8]; 64];
 
 impl Index<Position> for AttackPatterns {
     type Output = BitBoard;
@@ -42,21 +43,13 @@ impl fmt::Debug for BitBoard {
 }
 
 lazy_static! {
-    static ref RAYS_E: AttackPatterns = BitBoard::generate_attack_rays(Dir::E);
-    static ref RAYS_NE: AttackPatterns = BitBoard::generate_attack_rays(Dir::NE);
-    static ref RAYS_N: AttackPatterns = BitBoard::generate_attack_rays(Dir::N);
-    static ref RAYS_NW: AttackPatterns = BitBoard::generate_attack_rays(Dir::NW);
-    static ref RAYS_W: AttackPatterns = BitBoard::generate_attack_rays(Dir::W);
-    static ref RAYS_SW: AttackPatterns = BitBoard::generate_attack_rays(Dir::SW);
-    static ref RAYS_S: AttackPatterns = BitBoard::generate_attack_rays(Dir::S);
-    static ref RAYS_SE: AttackPatterns = BitBoard::generate_attack_rays(Dir::SE);
-    static ref SLIDING_ATTACK_LOOKUP: [[u8; 8]; 64] = BitBoard::generate_attack_lookups();
-    static ref KNIGHT_LOOKUP: [BitBoard; 64] = BitBoard::generate_knight_lookup();
-    static ref KING_LOOKUP: [BitBoard; 64] = BitBoard::generate_king_lookup();
+    static ref SLIDING_ATTACK_LOOKUP: OccupancyLookup = BitBoard::generate_attack_lookups();
+    static ref KNIGHT_LOOKUP: AttackPatterns = BitBoard::generate_knight_lookup();
+    static ref KING_LOOKUP: AttackPatterns = BitBoard::generate_king_lookup();
 }
 
 impl BitBoard {
-    const FULL: Self = Self(!0);
+    // const FULL: Self = Self(!0);
 
     const FILE_A: Self = Self(0x0101_0101_0101_0101);
 
@@ -177,27 +170,6 @@ impl BitBoard {
         }
     }
 
-    fn generate_attack_ray(position: Position, direction: Coords) -> BitBoard {
-        let mut board = BitBoard::zero();
-        let mut pos = position.to_coords();
-        loop {
-            pos = pos + direction;
-            if !pos.is_in_bounds() {
-                break;
-            }
-            board = board.set(pos.to_pos().0);
-        }
-        board
-    }
-
-    fn generate_attack_rays(direction: Coords) -> AttackPatterns {
-        let mut boards = [BitBoard::zero(); 64];
-        for (i, board) in boards.iter_mut().enumerate() {
-            *board = Self::generate_attack_ray(Position(i as u8), direction);
-        }
-        boards
-    }
-
     fn fill(self, rhs: Self) -> Self {
         Self(self.wrapping_mul(rhs.0))
     }
@@ -236,9 +208,11 @@ impl BitBoard {
         match location {
             L::Rank(rank) => board.translate(0, rank as i8),
             L::File(file) => board
+                .clear(0)
                 .fill(Self::ANTI_DIAGONAL)
                 .intersect(Self::from_file(7))
-                .translate(-7i8.saturating_sub_unsigned(file), 0),
+                .union(Self(((line & 0x1) as u64) << 7))
+                .translate(-(7i8.saturating_sub_unsigned(file)), 0),
             L::Diagonal(offset) => board
                 .fill_north()
                 .intersect(Self::DIAGONAL.translate(0, offset)),
@@ -249,7 +223,7 @@ impl BitBoard {
     }
 
     // Index into this attack lookup is the middle 6 bits of the rank/file/diagonal. The edges don't matter, as there are no tiles behind them.
-    fn generate_attack_lookups() -> [[u8; 8]; 64] {
+    fn generate_attack_lookups() -> OccupancyLookup {
         let mut table = [[0; 8]; 64];
         for occupancy in 0u8..64 {
             for pos in 0u8..8 {
@@ -287,7 +261,7 @@ impl BitBoard {
         res
     }
 
-    fn generate_knight_lookup() -> [Self; 64] {
+    fn generate_knight_lookup() -> AttackPatterns {
         let mut res = [BitBoard::zero(); 64];
         for (i, board) in res.iter_mut().enumerate() {
             let pos = Position(i as u8);
@@ -301,7 +275,7 @@ impl BitBoard {
         res
     }
 
-    fn generate_king_lookup() -> [Self; 64] {
+    fn generate_king_lookup() -> AttackPatterns {
         let mut res = [BitBoard::zero(); 64];
         for (i, board) in res.iter_mut().enumerate() {
             let pos = Position(i as u8);
@@ -347,7 +321,10 @@ impl Display for BitBoard {
     }
 }
 
+#[derive(Clone)]
 struct Pieces([BitBoard; 6]);
+
+#[derive(Clone)]
 struct ColorMaps([BitBoard; 2]);
 
 impl Pieces {
@@ -392,7 +369,9 @@ impl IndexMut<ChessColor> for ColorMaps {
 
 pub struct Chessboard {
     pieces: Pieces,
+    initial_pieces: Pieces,
     colors: ColorMaps,
+    initial_colors: ColorMaps,
     history: Vec<Move>,
     result: ChessResult,
     white_player: Player,
@@ -401,6 +380,20 @@ pub struct Chessboard {
 }
 
 impl Chessboard {
+    pub fn new() -> Self {
+        Self {
+            pieces: Pieces::new(),
+            initial_pieces: Pieces::new(),
+            colors: ColorMaps::new(),
+            initial_colors: ColorMaps::new(),
+            history: Vec::new(),
+            result: ChessResult::Undecided,
+            white_player: Player::Human,
+            black_player: Player::Human,
+            current_turn: ChessColor::White,
+        }
+    }
+
     pub fn get(&self, piece: PieceType, color: ChessColor) -> BitBoard {
         self.pieces[piece].intersect(self.colors[color])
     }
@@ -490,6 +483,7 @@ impl Chessboard {
         piece_map: BitBoard,
     ) {
         use PieceType as P;
+        let valid_tiles = !self.colors[color];
         match piece {
             P::Pawn => {
                 self.generate_pawn_moves(moves, piece_map, color);
@@ -500,37 +494,21 @@ impl Chessboard {
                         moves,
                         pos,
                         &self
-                            .generate_knight_moves(pos.to_mask(), color)
+                            .generate_knight_moves(pos.to_mask())
+                            .intersect(valid_tiles)
                             .serialized(),
                     );
                 }
             }
-            P::Bishop => {
+            P::Bishop | P::Rook | P::Queen => {
                 for pos in piece_map.serialized() {
                     Self::add_moves_with_origin(
                         moves,
                         pos,
                         &self
-                            .generate_bishop_moves(pos.to_mask(), color)
+                            .generate_sliding_attack_map(piece, pos.to_mask(), self.occupancy())
+                            .intersect(valid_tiles)
                             .serialized(),
-                    );
-                }
-            }
-            P::Rook => {
-                for pos in piece_map.serialized() {
-                    Self::add_moves_with_origin(
-                        moves,
-                        pos,
-                        &self.generate_rook_moves(pos.to_mask(), color).serialized(),
-                    );
-                }
-            }
-            P::Queen => {
-                for pos in piece_map.serialized() {
-                    Self::add_moves_with_origin(
-                        moves,
-                        pos,
-                        &self.generate_queen_moves(pos.to_mask(), color).serialized(),
                     );
                 }
             }
@@ -539,7 +517,11 @@ impl Chessboard {
                     Self::add_moves_with_origin(
                         moves,
                         pos,
-                        &self.generate_king_moves(pos.to_mask(), color).serialized(),
+                        &self
+                            .generate_king_moves(pos.to_mask())
+                            .intersect(valid_tiles)
+                            .intersect(!self.get_attack_map(!color))
+                            .serialized(),
                     );
                 }
             }
@@ -599,14 +581,12 @@ impl Chessboard {
         Self::add_moves(moves, capture_offset, &east_captures.serialized());
     }
 
-    fn generate_knight_moves(&self, pieces: BitBoard, color: ChessColor) -> BitBoard {
-        // We cannot move to or capture our own pieces
-        let valid_tiles = !self.colors[color];
+    fn generate_knight_moves(&self, pieces: BitBoard) -> BitBoard {
         pieces
             .serialized()
             .iter()
             .fold(BitBoard::zero(), |acc, pos| {
-                acc.union(KNIGHT_LOOKUP[pos.0 as usize].intersect(valid_tiles))
+                acc.union(KNIGHT_LOOKUP[pos.0 as usize])
             })
     }
 
@@ -625,49 +605,36 @@ impl Chessboard {
         })
     }
 
-    fn generate_bishop_moves(&self, pieces: BitBoard, color: ChessColor) -> BitBoard {
-        let occupancy = self.occupancy();
-        let valid_tiles = !self.colors[color];
-        pieces
+    fn generate_sliding_attack_map(
+        &self,
+        piece_type: PieceType,
+        positions: BitBoard,
+        occupancy: BitBoard,
+    ) -> BitBoard {
+        use LineOrientation as O;
+        const BISHOP_DIRECTIONS: &[O] = &[O::Diagonal, O::AntiDiagonal];
+        const ROOK_DIRECTIONS: &[O] = &[O::Rank, O::File];
+        const QUEEN_DIRECTIONS: &[O] = &[O::Rank, O::File, O::Diagonal, O::AntiDiagonal];
+        let directions = match piece_type {
+            PieceType::Bishop => BISHOP_DIRECTIONS,
+            PieceType::Rook => ROOK_DIRECTIONS,
+            PieceType::Queen => QUEEN_DIRECTIONS,
+            _ => unreachable!(
+                "tried to generate sliding attack map for PieceType::{:?}",
+                piece_type
+            ),
+        };
+        positions
             .serialized()
             .iter()
             .fold(BitBoard::zero(), |acc, pos| {
-                self.generate_sliding_moves(
-                    occupancy,
-                    *pos,
-                    &[LineOrientation::Diagonal, LineOrientation::AntiDiagonal],
-                )
-                .union(acc)
+                self.generate_sliding_moves(occupancy, *pos, directions)
+                    .union(acc)
             })
-            .intersect(valid_tiles)
     }
 
-    fn generate_rook_moves(&self, pieces: BitBoard, color: ChessColor) -> BitBoard {
-        let occupancy = self.occupancy();
-        let valid_tiles = !self.colors[color];
-        pieces
-            .serialized()
-            .iter()
-            .fold(BitBoard::zero(), |acc, pos| {
-                self.generate_sliding_moves(
-                    occupancy,
-                    *pos,
-                    &[LineOrientation::Rank, LineOrientation::File],
-                )
-                .union(acc)
-            })
-            .intersect(valid_tiles)
-    }
-
-    fn generate_queen_moves(&self, pieces: BitBoard, color: ChessColor) -> BitBoard {
-        self.generate_bishop_moves(pieces, color)
-            .union(self.generate_rook_moves(pieces, color))
-    }
-
-    fn generate_king_moves(&self, piece: BitBoard, color: ChessColor) -> BitBoard {
-        // We cannot move to or capture our own pieces
-        let valid_tiles = !self.colors[color];
-        KING_LOOKUP[piece.trailing_zeros() as usize].intersect(valid_tiles)
+    fn generate_king_moves(&self, piece: BitBoard) -> BitBoard {
+        KING_LOOKUP[piece.trailing_zeros() as usize]
     }
 
     fn get_attack_map(&self, color: ChessColor) -> BitBoard {
@@ -683,17 +650,26 @@ impl Chessboard {
 
         let pawns = pieces.intersect(self.pieces[PieceType::Pawn]);
         attack_map = attack_map.union(pawns.translate(Dir::W_OFFSET, rank_offset));
-        attack_map = attack_map.union(pieces.translate(Dir::E_OFFSET, rank_offset));
+        attack_map = attack_map.union(pawns.translate(Dir::E_OFFSET, rank_offset));
 
         let knights = pieces.intersect(self.pieces[PieceType::Knight]);
         attack_map = knights.serialized().iter().fold(attack_map, |acc, pos| {
             acc.union(KNIGHT_LOOKUP[pos.0 as usize])
         });
 
-        let knights = pieces.intersect(self.pieces[PieceType::Knight]);
-        attack_map = knights.serialized().iter().fold(attack_map, |acc, pos| {
-            acc.union(KNIGHT_LOOKUP[pos.0 as usize])
-        });
+        let occupancy = self.occupancy();
+        for t in [PieceType::Bishop, PieceType::Rook, PieceType::Queen] {
+            attack_map = attack_map.union(self.generate_sliding_attack_map(
+                t,
+                pieces.intersect(self.pieces[t]),
+                occupancy,
+            ));
+        }
+
+        let king = pieces.intersect(self.pieces[PieceType::King]);
+        if !king.is_empty() {
+            attack_map = attack_map.union(KING_LOOKUP[king.trailing_zeros() as usize]);
+        }
 
         attack_map
     }
@@ -713,7 +689,7 @@ impl Default for Chessboard {
         const BLACK: B = B::RANK_7.union(B::RANK_8);
 
         let pieces = {
-            let mut p = Pieces([BitBoard::zero(); 6]);
+            let mut p = Pieces::new();
             p[PieceType::Pawn] = PAWNS;
             p[PieceType::Knight] = KNIGHTS;
             p[PieceType::Bishop] = BISHOPS;
@@ -724,7 +700,7 @@ impl Default for Chessboard {
         };
 
         let colors = {
-            let mut c = ColorMaps([BitBoard::zero(); 2]);
+            let mut c = ColorMaps::new();
             c[ChessColor::White] = WHITE;
             c[ChessColor::Black] = BLACK;
             c
@@ -744,13 +720,11 @@ impl Default for Chessboard {
         // }
 
         Self {
+            initial_pieces: pieces.clone(),
             pieces,
+            initial_colors: colors.clone(),
             colors,
-            history: Vec::new(),
-            result: ChessResult::Undecided,
-            white_player: Player::Human,
-            black_player: Player::Bot(crate::player::BotStrategy::Random),
-            current_turn: ChessColor::White,
+            ..Self::new()
         }
     }
 }
@@ -760,6 +734,7 @@ impl Chess for Chessboard {
         let ret = self.make_move(chess_move);
         if ret.is_ok() {
             self.current_turn = !self.current_turn;
+            self.history.push(chess_move);
         }
         ret
     }
@@ -798,9 +773,9 @@ impl Chess for Chessboard {
         }
 
         let mask = pos.to_mask();
-        let color = if self.colors[ChessColor::White].intersect(mask).0 != 0 {
+        let color = if !self.colors[ChessColor::White].intersect(mask).is_empty() {
             ChessColor::White
-        } else if self.colors[ChessColor::Black].intersect(mask).0 != 0 {
+        } else if !self.colors[ChessColor::Black].intersect(mask).is_empty() {
             ChessColor::Black
         } else {
             return None;
@@ -808,7 +783,7 @@ impl Chess for Chessboard {
 
         let piece = PIECE_TYPES
             .iter()
-            .find(|&&piece| self.pieces[piece].intersect(mask).0 != 0)?;
+            .find(|&&piece| !self.pieces[piece].intersect(mask).is_empty())?;
 
         Some(Piece::new(color, *piece))
     }
@@ -834,7 +809,14 @@ impl Chess for Chessboard {
     }
 
     fn undo(&mut self) {
-        todo!()
+        self.history.pop();
+        self.pieces = self.initial_pieces.clone();
+        self.colors = self.initial_colors.clone();
+        for m in self.history.clone().iter() {
+            self.make_move(*m).expect("History contains invalid move.");
+        }
+        self.result = ChessResult::Undecided;
+        self.current_turn = !self.current_turn;
     }
 }
 
@@ -860,6 +842,7 @@ mod tests {
     fn test_line_functions() {
         const BOARD: BitBoard = BitBoard::from_file(1)
             .union(BitBoard::RANK_8)
+            .set(0o03)
             .set(32)
             .set(34)
             .set(53)
@@ -869,7 +852,7 @@ mod tests {
             (Line::Rank(5), 0b0000_1010),
             (Line::Rank(6), 0b0010_0010),
             (Line::File(2), 0b1001_0000),
-            (Line::File(3), 0b1010_0000),
+            (Line::File(3), 0b1010_0001),
             (Line::Diagonal(0), 0b1000_0010),
             (Line::Diagonal(-2), 0b0000_0000),
             (Line::Diagonal(2), 0b0010_1110),
@@ -878,7 +861,9 @@ mod tests {
             (Line::AntiDiagonal(1), 0b0000_1010),
         ];
 
+        println!("board:{}", BOARD);
         for (location, expected) in tests {
+            println!("line={:?}", location);
             assert_eq!(BOARD.get_line(location), expected);
             assert_eq!(
                 BitBoard::from_line(expected, location),
@@ -988,6 +973,55 @@ mod tests {
             .clear(0o74)
             .union(BitBoard::from_rank(4))
             .clear(move1.1 .0);
+
+        assert_eq!(moves, expected);
+
+        board.move_piece(Move(P(0o60), P(0o54))).unwrap();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
+        let expected = BitBoard::from_file(4)
+            .translate(0, 2)
+            .clear(0o74)
+            .union(BitBoard::from_rank(4))
+            .clear(move1.1 .0);
+
+        assert_eq!(moves, expected);
+    }
+
+    #[test]
+    fn test_generate_king_moves() {
+        let pieces = [
+            ("c1", Piece::new(ChessColor::White, PieceType::King)),
+            ("d5", Piece::new(ChessColor::Black, PieceType::Queen)),
+            ("a4", Piece::new(ChessColor::Black, PieceType::Knight)),
+        ];
+
+        let board =
+            Chessboard::with_pieces(&pieces.map(|(pos, piece)| (P::uci(pos).unwrap(), piece)));
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci(pieces[0].0).unwrap()));
+
+        let expected = ["b1", "c2"];
+        let expected = BitBoard::from_pos_list(&expected.map(|p| P::uci(p).unwrap()));
+
+        assert_eq!(moves, expected);
+    }
+
+    #[test]
+    fn test_discovered_check() {
+        let pieces = [
+            ("e4", Piece::new(ChessColor::White, PieceType::Queen)),
+            ("b4", Piece::new(ChessColor::White, PieceType::King)),
+            ("g4", Piece::new(ChessColor::Black, PieceType::Queen)),
+        ];
+
+        let board =
+            Chessboard::with_pieces(&pieces.map(|(pos, piece)| (P::uci(pos).unwrap(), piece)));
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci(pieces[0].0).unwrap()));
+
+        let expected = ["c4", "d4", "f4", "g4"];
+        let expected = BitBoard::from_pos_list(&expected.map(|p| P::uci(p).unwrap()));
 
         assert_eq!(moves, expected);
     }

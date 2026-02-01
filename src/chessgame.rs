@@ -14,7 +14,7 @@ use ratatui::{
 use crate::chessboard::SIZE;
 
 pub struct ChessGame {
-    board: Box<dyn Chess>,
+    pub board: Box<dyn Chess>,
     active_tile: Option<Position>,
     pub bots_active: bool,
     pub is_running: bool,
