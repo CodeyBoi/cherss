@@ -1,13 +1,15 @@
 use core::fmt;
 use std::{
-    fmt::{Display, Write},
+    fmt::Display,
     ops::{Deref, Index, IndexMut, Not},
 };
 
 use lazy_static::lazy_static;
 
 use crate::{
-    chess::{Chess, ChessMoveError, Coords, Dir, Line, LineOrientation, Move, Position},
+    chess::{
+        Chess, ChessMoveError, Coords, Dir, Line, LineOrientation, Move, ParseMoveError, Position,
+    },
     chessboard::ChessResult,
     chessgame::ChessGame,
     piece::{ChessColor, Piece, PieceType, PIECE_TYPES},
@@ -178,6 +180,14 @@ impl BitBoard {
         self.fill(Self::FILE_A)
     }
 
+    fn from_uci(tiles: &[&str]) -> Result<Self, ParseMoveError> {
+        let pos_list = tiles
+            .iter()
+            .map(|tile| Position::uci(tile).unwrap())
+            .collect::<Vec<_>>();
+        Ok(Self::from_pos_list(&pos_list))
+    }
+
     fn get_line(self, line: Line) -> u8 {
         use Line as L;
         // These lines are extracted as per https://www.chessprogramming.org/Kindergarten_Bitboards
@@ -290,8 +300,10 @@ impl BitBoard {
         res
     }
 
-    fn from_pos_list(cells: &[Position]) -> Self {
-        cells.iter().fold(Self::zero(), |acc, pos| acc.set(pos.0))
+    fn from_pos_list<'a>(cells: impl IntoIterator<Item = &'a Position>) -> Self {
+        cells
+            .into_iter()
+            .fold(Self::zero(), |acc, pos| acc.set(pos.0))
     }
 }
 
@@ -305,19 +317,54 @@ impl Not for BitBoard {
 
 impl Display for BitBoard {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_char('\n')?;
+        let mut out = String::with_capacity(1 + 9 * 8);
+        out.push('\n');
         for rank in (0..8).rev() {
             for file in 0..8 {
                 if self.get(rank * 8 + file) {
-                    f.write_char('X')?;
+                    out.push('X');
                 } else {
-                    f.write_char('·')?;
+                    out.push('·');
                 }
-                f.write_char(' ')?;
+                out.push(' ');
             }
-            f.write_char('\n')?;
+            out.push('\n');
         }
-        Ok(())
+        f.write_str(&out)
+    }
+}
+
+impl Display for Chessboard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = String::with_capacity(1 + 9 * 8);
+        out.push('\n');
+        for rank in (0..8).rev() {
+            for file in 0..8 {
+                let pos = Coords::new(file, rank).to_pos();
+                match self.piece_at(pos) {
+                    Some(Piece { color, piece }) => {
+                        let ch = match piece {
+                            PieceType::Pawn => 'P',
+                            PieceType::Knight => 'N',
+                            PieceType::Bishop => 'B',
+                            PieceType::Rook => 'R',
+                            PieceType::Queen => 'Q',
+                            PieceType::King => 'K',
+                        };
+                        let ch = match color {
+                            ChessColor::White => ch.to_ascii_uppercase(),
+                            ChessColor::Black => ch.to_ascii_lowercase(),
+                        };
+                        out.push(ch);
+                    }
+                    None => out.push('·'),
+                };
+
+                out.push(' ');
+            }
+            out.push('\n');
+        }
+        f.write_str(&out)
     }
 }
 
@@ -976,13 +1023,13 @@ mod tests {
 
         assert_eq!(moves, expected);
 
-        board.move_piece(Move(P(0o60), P(0o54))).unwrap();
+        board.move_piece(Move(P(0o60), P(0o45))).unwrap();
 
         let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
         let expected = BitBoard::from_file(4)
             .translate(0, 2)
             .clear(0o74)
-            .union(BitBoard::from_rank(4))
+            .union(BitBoard::from_rank(4).translate(-2, 0))
             .clear(move1.1 .0);
 
         assert_eq!(moves, expected);
@@ -1008,7 +1055,7 @@ mod tests {
     }
 
     #[test]
-    fn test_discovered_check() {
+    fn test_pinned_piece() {
         let pieces = [
             ("e4", Piece::new(ChessColor::White, PieceType::Queen)),
             ("b4", Piece::new(ChessColor::White, PieceType::King)),
@@ -1024,5 +1071,31 @@ mod tests {
         let expected = BitBoard::from_pos_list(&expected.map(|p| P::uci(p).unwrap()));
 
         assert_eq!(moves, expected);
+    }
+
+    #[test]
+    fn test_castling() {
+        let mut board = Chessboard::default();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("e1").unwrap()));
+        let expected = BitBoard::zero();
+
+        assert_eq!(moves, expected);
+
+        board
+            .move_piece(Move(P::uci("f1").unwrap(), P::uci("f3").unwrap()))
+            .unwrap();
+        board
+            .move_piece(Move(P::uci("g1").unwrap(), P::uci("g3").unwrap()))
+            .unwrap();
+
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("e1").unwrap()));
+        let expected = BitBoard::from_uci(&["f1", "g1"]).unwrap();
+
+        assert_eq!(moves, expected);
+
+        // TODO: Add cases when king or rook has moved
+        // TODO: Add cases where center tiles are blocked
+        // TODO: Add cases where center tiles are in check
     }
 }
