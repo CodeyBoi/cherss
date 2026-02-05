@@ -22,6 +22,11 @@ pub struct BitBoard(pub u64);
 type AttackPatterns = [BitBoard; 64];
 type OccupancyLookup = [[u8; 8]; 64];
 
+struct MovesFrom {
+    from: Position,
+    to: BitBoard,
+}
+
 impl Index<Position> for AttackPatterns {
     type Output = BitBoard;
 
@@ -45,6 +50,7 @@ impl fmt::Debug for BitBoard {
 }
 
 lazy_static! {
+    /// Indexed by the middle 6 (i.e. excluding the outer tiles) bits of the relevant occupancy bitline.
     static ref SLIDING_ATTACK_LOOKUP: OccupancyLookup = BitBoard::generate_attack_lookups();
     static ref KNIGHT_LOOKUP: AttackPatterns = BitBoard::generate_knight_lookup();
     static ref KING_LOOKUP: AttackPatterns = BitBoard::generate_king_lookup();
@@ -180,10 +186,10 @@ impl BitBoard {
         self.fill(Self::FILE_A)
     }
 
-    fn from_uci(tiles: &[&str]) -> Result<Self, ParseMoveError> {
+    fn from_uci<'a>(tiles: impl IntoIterator<Item = &'a str>) -> Result<Self, ParseMoveError> {
         let pos_list = tiles
-            .iter()
-            .map(|tile| Position::uci(tile).unwrap())
+            .into_iter()
+            .map(|tile| Position::from_uci(tile).unwrap())
             .collect::<Vec<_>>();
         Ok(Self::from_pos_list(&pos_list))
     }
@@ -265,9 +271,6 @@ impl BitBoard {
                 break;
             }
         }
-
-        // eprintln!("           {}V", " ".repeat(7 - piece_pos as usize));
-        // eprintln!("occupancy: {:08b}\n   attack: {:08b}", occupancy, res);
         res
     }
 
@@ -300,7 +303,7 @@ impl BitBoard {
         res
     }
 
-    fn from_pos_list<'a>(cells: impl IntoIterator<Item = &'a Position>) -> Self {
+    pub fn from_pos_list<'a>(cells: impl IntoIterator<Item = &'a Position>) -> Self {
         cells
             .into_iter()
             .fold(Self::zero(), |acc, pos| acc.set(pos.0))
@@ -524,7 +527,7 @@ impl Chessboard {
 
     fn generate_moves(
         &self,
-        moves: &mut Vec<Move>,
+        moves: &mut Vec<(Position, BitBoard)>,
         piece: PieceType,
         color: ChessColor,
         piece_map: BitBoard,
@@ -798,6 +801,8 @@ impl Chess for Chessboard {
         moves.iter().map(|m| m.1).collect()
     }
 
+    fn moves_from_as_bitboard(&self, pos: Position) -> BitBoard {}
+
     fn moves_by_piece(&self, piece: PieceType, color: ChessColor) -> Vec<Move> {
         let mut moves = Vec::new();
         let piece_map = self.get(piece, color);
@@ -923,25 +928,27 @@ mod tests {
     fn test_generate_pawn_moves() {
         let mut board = Chessboard::default();
 
-        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("c2").unwrap()));
-        let expected = BitBoard::from_pos_list(&[P::uci("c3").unwrap(), P::uci("c4").unwrap()]);
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::from_uci("c2").unwrap()));
+        let expected =
+            BitBoard::from_pos_list(&[P::from_uci("c3").unwrap(), P::from_uci("c4").unwrap()]);
 
         assert_eq!(moves, expected);
 
-        let move1 = Move(P::uci("e2").unwrap(), P::uci("e4").unwrap());
+        let move1 = Move(P::from_uci("e2").unwrap(), P::from_uci("e4").unwrap());
 
         board.move_piece(move1).unwrap();
         board
-            .move_piece(Move(P::uci("f7").unwrap(), P::uci("f5").unwrap()))
+            .move_piece(Move(P::from_uci("f7").unwrap(), P::from_uci("f5").unwrap()))
             .unwrap();
 
         let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
-        let expected = BitBoard::from_pos_list(&[P::uci("e5").unwrap(), P::uci("f5").unwrap()]);
+        let expected =
+            BitBoard::from_pos_list(&[P::from_uci("e5").unwrap(), P::from_uci("f5").unwrap()]);
 
         assert_eq!(moves, expected);
 
         board
-            .move_piece(Move(P::uci("f5").unwrap(), P::uci("e5").unwrap()))
+            .move_piece(Move(P::from_uci("f5").unwrap(), P::from_uci("e5").unwrap()))
             .unwrap();
 
         let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
@@ -952,8 +959,9 @@ mod tests {
     fn test_generate_knight_moves() {
         let mut board = Chessboard::default();
 
-        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("b1").unwrap()));
-        let expected = BitBoard::from_pos_list(&[P::uci("a3").unwrap(), P::uci("c3").unwrap()]);
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::from_uci("b1").unwrap()));
+        let expected =
+            BitBoard::from_pos_list(&[P::from_uci("a3").unwrap(), P::from_uci("c3").unwrap()]);
 
         assert_eq!(moves, expected);
 
@@ -963,10 +971,10 @@ mod tests {
 
         let moves = BitBoard::from_pos_list(&board.moves_from(move1.1));
         let expected = BitBoard::from_pos_list(&[
-            P::uci("g8").unwrap(),
-            P::uci("f7").unwrap(),
-            P::uci("f5").unwrap(),
-            P::uci("g4").unwrap(),
+            P::from_uci("g8").unwrap(),
+            P::from_uci("f7").unwrap(),
+            P::from_uci("f5").unwrap(),
+            P::from_uci("g4").unwrap(),
         ]);
 
         assert_eq!(moves, expected);
@@ -976,7 +984,7 @@ mod tests {
     fn test_generate_bishop_moves() {
         let mut board = Chessboard::default();
 
-        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("c1").unwrap()));
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::from_uci("c1").unwrap()));
         let expected = BitBoard::zero();
 
         assert_eq!(moves, expected);
@@ -995,7 +1003,7 @@ mod tests {
     fn test_generate_rook_moves() {
         let mut board = Chessboard::default();
 
-        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("a1").unwrap()));
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::from_uci("a1").unwrap()));
         let expected = BitBoard::zero();
 
         assert_eq!(moves, expected);
@@ -1044,12 +1052,12 @@ mod tests {
         ];
 
         let board =
-            Chessboard::with_pieces(&pieces.map(|(pos, piece)| (P::uci(pos).unwrap(), piece)));
+            Chessboard::with_pieces(&pieces.map(|(pos, piece)| (P::from_uci(pos).unwrap(), piece)));
 
-        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci(pieces[0].0).unwrap()));
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::from_uci(pieces[0].0).unwrap()));
 
         let expected = ["b1", "c2"];
-        let expected = BitBoard::from_pos_list(&expected.map(|p| P::uci(p).unwrap()));
+        let expected = BitBoard::from_pos_list(&expected.map(|p| P::from_uci(p).unwrap()));
 
         assert_eq!(moves, expected);
     }
@@ -1063,12 +1071,11 @@ mod tests {
         ];
 
         let board =
-            Chessboard::with_pieces(&pieces.map(|(pos, piece)| (P::uci(pos).unwrap(), piece)));
+            Chessboard::with_pieces(&pieces.map(|(pos, piece)| (P::from_uci(pos).unwrap(), piece)));
 
-        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci(pieces[0].0).unwrap()));
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::from_uci(pieces[0].0).unwrap()));
 
-        let expected = ["c4", "d4", "f4", "g4"];
-        let expected = BitBoard::from_pos_list(&expected.map(|p| P::uci(p).unwrap()));
+        let expected = BitBoard::from_uci(["c4", "d4", "f4", "g4"]).unwrap();
 
         assert_eq!(moves, expected);
     }
@@ -1077,20 +1084,20 @@ mod tests {
     fn test_castling() {
         let mut board = Chessboard::default();
 
-        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("e1").unwrap()));
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::from_uci("e1").unwrap()));
         let expected = BitBoard::zero();
 
         assert_eq!(moves, expected);
 
         board
-            .move_piece(Move(P::uci("f1").unwrap(), P::uci("f3").unwrap()))
+            .move_piece(Move::from_uci("f1", "f3").unwrap())
             .unwrap();
         board
-            .move_piece(Move(P::uci("g1").unwrap(), P::uci("g3").unwrap()))
+            .move_piece(Move::from_uci("g1", "g3").unwrap())
             .unwrap();
 
-        let moves = BitBoard::from_pos_list(&board.moves_from(P::uci("e1").unwrap()));
-        let expected = BitBoard::from_uci(&["f1", "g1"]).unwrap();
+        let moves = BitBoard::from_pos_list(&board.moves_from(P::from_uci("e1").unwrap()));
+        let expected = BitBoard::from_uci(["f1", "g1"]).unwrap();
 
         assert_eq!(moves, expected);
 

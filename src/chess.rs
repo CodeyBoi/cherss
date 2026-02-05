@@ -80,6 +80,9 @@ pub trait Chess {
     fn make_move(&mut self, chess_move: Move) -> Result<(), ChessMoveError>;
     fn piece_at(&self, pos: Position) -> Option<Piece>;
     fn moves_from(&self, pos: Position) -> Vec<Position>;
+    fn moves_from_as_bitboard(&self, pos: Position) -> BitBoard {
+        BitBoard::from_pos_list(&self.moves_from(pos))
+    }
     fn moves_by_piece(&self, piece: PieceType, color: ChessColor) -> Vec<Move>;
     fn all_moves(&self) -> Vec<Move> {
         let color = self.current_turn();
@@ -139,7 +142,7 @@ impl Position {
         }
     }
 
-    pub fn uci(uci: &str) -> Result<Self, ParseMoveError> {
+    pub fn from_uci(uci: &str) -> Result<Self, ParseMoveError> {
         let mut chars = uci.chars();
         let col = chars.next().ok_or(ParseMoveError::InvalidLength)?;
         let col = if ('a'..='h').contains(&col) {
@@ -316,9 +319,9 @@ pub enum ParseMoveError {
 }
 
 impl Move {
-    fn from_uci(uci: &str) -> Result<Self, ParseMoveError> {
-        let from = Position::uci(&uci[0..2])?;
-        let to = Position::uci(&uci[2..4])?;
+    pub fn from_uci(from: &str, to: &str) -> Result<Self, ParseMoveError> {
+        let from = Position::from_uci(from)?;
+        let to = Position::from_uci(to)?;
         Ok(Move(from, to))
     }
 }
